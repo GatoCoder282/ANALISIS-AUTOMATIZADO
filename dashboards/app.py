@@ -1,351 +1,385 @@
-from time import time
+import time
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import os
 import glob
 import sys
-# Aseguramos que python encuentre los archivos si están en la misma carpeta
+
+# Aseguramos que python encuentre los archivos
 sys.path.append(os.getcwd()) 
 
 from data.robotMercat import RobotMercat
 from data.config_reportes import REPORTES_CONFIG
 from procesamiento import AnalistaDeDatos
+from analista_operacional import AnalistaOperacional
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Dashboard C&C", layout="wide")
+st.set_page_config(page_title="Dashboard C&C", layout="wide", page_icon="☕")
 
-# --- FUNCIONES DE TUS NOTEBOOKS (BACKEND) ---
-# Traídas directamente de tu Indice_Mercat.ipynb
-def limpiar_columnas_unnamed(df: pd.DataFrame):
-    df = df.dropna(axis=1, how='all')
-    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
-    return df
+# --- FUNCIONES UTILITARIAS ---
+def obtener_archivos_disponibles():
+    ruta = os.path.join("data", "reportes")
+    if not os.path.exists(ruta): return []
+    files = [f for f in os.listdir(ruta) if f.endswith(('.csv', '.xlsx'))]
+    files.sort(key=lambda x: os.path.getctime(os.path.join(ruta, x)), reverse=True)
+    return files
 
-def transformar_fechas(df: pd.DataFrame):
-    if "Creado el" in df.columns:
-        df["Creado el"] = pd.to_datetime(df["Creado el"], errors="coerce", dayfirst=True)
-        df["Fecha"] = df["Creado el"].dt.date
-        df["Hora"] = df["Creado el"].dt.hour
-    return df
-
-# Traídas de AnalisisPan.ipynb
-def detectar_pan(producto: str):
-    tipos_pan = ["Pan Blanco", "Pan Integral", "Pan de orégano y aceituna", "Pan de tomate y albahaca"]
-    if not isinstance(producto, str): return None
-    for pan in tipos_pan:
-        if pan.lower() in producto.lower():
-            return pan
-    return "Sin Especificar"
-
-# --- CARGA DE DATOS ---
-def cargar_datos():
+def cargar_df(nombre_archivo):
     try:
-        # Busca el archivo más reciente en data/reportes
-        ruta_busqueda = os.path.join("data", "reportes", "*.csv")
-        archivos = glob.glob(ruta_busqueda)
-        
-        if not archivos:
-            return None, None # Retorna (df, nombre_archivo)
-
-        ultimo_archivo = max(archivos, key=os.path.getctime)
-        nombre_archivo = os.path.basename(ultimo_archivo)
-        
-        # Leemos el archivo
-        df = pd.read_csv(ultimo_archivo)
-        
-        # Limpieza básica común
-        df = limpiar_columnas_unnamed(df)
-        
-        # Intentamos transformar fechas si existen columnas candidatas
-        # (Tu función transformar_fechas ya maneja si la columna no existe)
-        df = transformar_fechas(df)
-        
-        return df, nombre_archivo
-        
+        ruta = os.path.join("data", "reportes", nombre_archivo)
+        if nombre_archivo.endswith('.csv'):
+            df = pd.read_csv(ruta)
+        else:
+            df = pd.read_excel(ruta)
+        df = df.dropna(axis=1, how='all')
+        df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+        return df
     except Exception as e:
-        st.error(f"Error al leer el archivo: {e}")
-        return None, None
-# --- INTERFAZ GRÁFICA (FRONTEND) ---
+        st.error(f"Error leyendo {nombre_archivo}: {e}")
+        return None
 
-# --- BARRA LATERAL DE CONTROL ---
+# ==============================================================================
+#                                   SIDEBAR
+# ==============================================================================
 with st.sidebar:
     st.image("https://via.placeholder.com/150", caption="C&C Cafetería")
-    st.title("🎛️ Centro de Mando")
+    st.title("🎛️ Navegación")
     
-    # --- SECCIÓN 1: EL ROBOT (Descargas) ---
-    with st.expander("🤖 Descargar Nuevo Reporte", expanded=True):
-        with st.form("form_robot"):
-            # 1. Configuración
-            opciones_reportes = list(REPORTES_CONFIG.keys())
-            tipo_reporte = st.selectbox("Tipo de Reporte", opciones_reportes)
-            
-            col1, col2 = st.columns(2)
-            fecha_inicio = col1.date_input("Desde", value=pd.to_datetime("today").date().replace(day=1))
-            fecha_fin = col2.date_input("Hasta", value=pd.to_datetime("today").date())
-            
-            # 2. GESTIÓN DE ARCHIVOS (¡LO NUEVO!)
-            st.markdown("---")
-            # Etiqueta personalizada para no perderse
-            etiqueta_default = f"{tipo_reporte}_{fecha_inicio.strftime('%Y%m')}"
-            nombre_personalizado = st.text_input("Guardar como:", value=etiqueta_default, help="Nombre para identificar este archivo luego")
-            
-            f_ini_str = fecha_inicio.strftime("%d/%m/%Y")
-            f_fin_str = fecha_fin.strftime("%d/%m/%Y")
-            # Checkbox de limpieza (Desmarcado por defecto para permitir múltiples)
-            limpiar_antes = st.checkbox("🗑️ Borrar archivos anteriores", value=False, help="Marca esto si quieres limpiar la carpeta antes de descargar")
-
-            boton_actualizar = st.form_submit_button("⬇️ Ejecutar Descarga")
-
-    # --- LÓGICA DE EJECUCIÓN ---
-    if boton_actualizar:
-        status_box = st.empty() # Caja para mensajes de estado
-        status_box.info("⏳ Iniciando Robot... Por favor espere.")
-        
-        try:
-            # A. Preparar rutas
-            carpeta_reportes = os.path.join(os.getcwd(), "data", "reportes")
-            if not os.path.exists(carpeta_reportes):
-                os.makedirs(carpeta_reportes)
-            
-            # B. Instanciar Robot
-            bot = RobotMercat(carpeta_reportes)
-            
-            # C. Login (Idealmente usa st.secrets para no hardcodear contraseñas)
-            # Por ahora usa tus variables, pero luego te enseño a ocultarlas
-            USUARIO = "diegomvaldez19@gmail.com"
-            PASSWORD = "Gatovaldez8Mercat"
-
-            if limpiar_antes:
-                bot.limpiar_carpeta_descargas()
-            
-            bot.login(USUARIO, PASSWORD)
-            
-            # D. Preparar Parámetros
-            # Aquí mapeamos los inputs de Streamlit a lo que espera el ERP
-            parametros = {
-                "fecha_inicio": f_ini_str,
-                "fecha_fin": f_fin_str,
-                "sucursal": "1087", # C&C
-                # Puedes agregar más lógica aquí si añades más filtros al form
-                "con_factura": "", # Todos por defecto
-                "anulado": ""
-            }
-            
-            # E. Descargar
-            config_seleccionada = REPORTES_CONFIG[tipo_reporte]
-            bot.descargar_reporte(config_seleccionada, parametros)
-            bot.renombrar_ultimo_archivo(nombre_personalizado)
-            
-            bot.cerrar()
-            st.success(f"✅ Guardado como: {nombre_personalizado}")
-            st.rerun()
-            
-          
-            
-        except Exception as e:
-            status_box.error(f"❌ Error del Robot: {e}")
-            if 'bot' in locals(): bot.cerrar()
-
-        # --- SECCIÓN 2: SELECTOR DE ARCHIVOS (¡CRUCIAL!) ---
+    modo_app = st.radio("Módulo:", 
+        ["🤖 Robot", "📊 Análisis Individual", "🔗 Análisis Maestro (Fusión)"],
+        index=1
+    )
+    
     st.divider()
-    st.subheader("📂 Archivos Disponibles")
     
-    # Buscamos todos los archivos en la carpeta
-    ruta_reportes = os.path.join("data", "reportes")
-    if not os.path.exists(ruta_reportes): os.makedirs(ruta_reportes)
-        
-    archivos_disponibles = [f for f in os.listdir(ruta_reportes) if f.endswith(('.csv', '.xlsx'))]
-    
-    # Ordenamos por fecha de creación (más nuevo arriba)
-    archivos_disponibles.sort(key=lambda x: os.path.getctime(os.path.join(ruta_reportes, x)), reverse=True)
-    
-    if archivos_disponibles:
-        # El usuario elige cuál ver
-        archivo_seleccionado = st.selectbox(
-            "Selecciona para analizar:", 
-            archivos_disponibles,
-            index=0 # Por defecto selecciona el primero (el más nuevo)
-        )
-        
-        # Botón para borrar el archivo seleccionado (Mantenimiento)
-        if st.button("🗑️ Eliminar Seleccionado"):
-            os.remove(os.path.join(ruta_reportes, archivo_seleccionado))
-            st.rerun()
-    else:
-        archivo_seleccionado = None
-        st.info("No hay reportes guardados.")
-
-df_raw, nombre_archivo = cargar_datos()
-
-if archivo_seleccionado:
-    ruta_completa = os.path.join("data", "reportes", archivo_seleccionado)
-    
-    try:
-        # Leemos el archivo seleccionado
-        df_raw = pd.read_csv(ruta_completa)
-        # (Aquí aplicas tus funciones de limpieza básicas que ya tienes)
-        df_raw = limpiar_columnas_unnamed(df_raw) 
-        
-        # Detectamos tipo (igual que antes)
-        if "Detalle" in df_raw.columns:
-            tipo_reporte_detectado = "VENTAS"
-        elif "Creado el" in df_raw.columns:
-            tipo_reporte_detectado = "INDICE"
-        else:
-            tipo_reporte_detectado = "OTRO"
-        
-        # Instanciamos el Analista
-        analista = AnalistaDeDatos(df_raw, tipo_reporte_detectado)
-        
-        # ... AQUI COMIENZA TU DASHBOARD DE SIEMPRE ...
-        st.header(f"📊 Análisis de: {archivo_seleccionado}")
-        st.caption(f"Tipo detectado: {tipo_reporte} | Registros: {len(df_raw)}")
-# --- BLOQUE DE DIAGNÓSTICO (BORRAR LUEGO) ---
-        with st.expander("🕵️‍♂️ Ver Columnas Detectadas (Debug)"):
-            st.write("Columnas encontradas en el CSV:")
-            st.write(df_raw.columns.tolist())
-            st.write("¿Existe 'Detalle'?", "Detalle" in df_raw.columns)
-            st.write("¿Existe 'Monto total'?", "Monto total" in df_raw.columns)
-            st.write("¿Existe 'Creado el'?", "Creado el" in df_raw.columns)
-        # -----
-    # --- DASHBOARD DE VENTAS (El más completo) ---
-        if tipo_reporte_detectado == "VENTAS":
+    if modo_app == "🤖 Robot":
+        st.subheader("Descargar Reporte")
+        with st.form("form_robot"):
+            opciones = list(REPORTES_CONFIG.keys())
+            tipo = st.selectbox("Reporte", opciones)
+            c1, c2 = st.columns(2)
+            fini = c1.date_input("Desde")
+            ffin = c2.date_input("Hasta")
+            nombre = st.text_input("Nombre:", value=f"{tipo}_{fini.strftime('%d%m')}")
+            limpiar = st.checkbox("Borrar previos", value=False)
             
-            # A. KPIS PRINCIPALES
-            kpis = analista.get_kpis_financieros()
-            if kpis:
-                c1, c2, c3, c4 = st.columns(4)
-                c1.metric("Ventas Netas", f"Bs {kpis['Ventas Totales']:,.2f}")
-                c2.metric("Ticket Promedio", f"Bs {kpis['Ticket Promedio']:,.2f}")
-                c3.metric("Transacciones", kpis['Transacciones'])
-                c4.metric("Descuentos Dados", f"Bs {kpis['Total Descuentos']:,.2f}")
-                st.divider()
+            if st.form_submit_button("⬇️ Ejecutar"):
+                try:
+                    folder = os.path.join(os.getcwd(), "data", "reportes")
+                    if not os.path.exists(folder): os.makedirs(folder)
+                    bot = RobotMercat(folder)
+                    if limpiar: bot.limpiar_carpeta_descargas()
+                    bot.login("diegomvaldez19@gmail.com", "Gatovaldez8Mercat")
+                    params = {
+                        "fecha_inicio": fini.strftime("%d/%m/%Y"),
+                        "fecha_fin": ffin.strftime("%d/%m/%Y"),
+                        "sucursal": "1087", "con_factura": "", "anulado": ""
+                    }
+                    bot.descargar_reporte(REPORTES_CONFIG[tipo], params)
+                    bot.renombrar_ultimo_archivo(nombre)
+                    bot.cerrar()
+                    st.success(f"✅ {nombre} descargado.")
+                    time.sleep(1)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error: {e}")
 
-            # B. PESTAÑAS DE ANÁLISIS
-            tab_prod, tab_tiempos, tab_meseros, tab_pagos = st.tabs([
-                "🍩 Productos Top", "⏰ Tiempos y Calor", "busts_in_silhouette: Equipo", "💳 Pagos"
-            ])
+    archivos = obtener_archivos_disponibles()
+    st.caption(f"Archivos: {len(archivos)}")
+
+# ==============================================================================
+#                           MODO 1: ANÁLISIS INDIVIDUAL
+# ==============================================================================
+if modo_app == "📊 Análisis Individual":
+    st.header("📊 Análisis Detallado")
+    
+    if not archivos:
+        st.warning("No hay archivos.")
+        st.stop()
+        
+    archivo_sel = st.selectbox("Selecciona archivo:", archivos)
+    
+    if archivo_sel:
+        df_raw = cargar_df(archivo_sel)
+        if df_raw is not None:
+            # Detección
+            tipo = "OTRO"
+            if "Detalle" in df_raw.columns: tipo = "VENTAS"
+            elif "Creado el" in df_raw.columns: tipo = "INDICE"
             
-            # 1. ANÁLISIS DE PRODUCTOS (Usando Regex)
-            with tab_prod:
-                df_prods = analista.analizar_productos()
-                if df_prods is not None and not df_prods.empty:
-                    col1, col2 = st.columns([2, 1])
-                    
-                    with col1:
-                        st.subheader("Top 10 Productos Más Vendidos")
-                        top_10 = df_prods.groupby("Producto")["Cantidad"].sum().nlargest(10).reset_index()
-                        fig_prod = px.bar(top_10, x="Cantidad", y="Producto", orientation='h', text_auto=True, color="Cantidad")
-                        st.plotly_chart(fig_prod, use_container_width=True)
-                    
-                    with col2:
-                        st.subheader("Por Tipo de Orden")
-                        # Filtro rápido para ver qué productos salen más por delivery vs mesa
-                        tipo_filtro = st.selectbox("Filtrar por:", df_prods["Tipo Orden"].unique())
-                        top_filtro = df_prods[df_prods["Tipo Orden"] == tipo_filtro].groupby("Producto")["Cantidad"].sum().nlargest(5)
-                        st.table(top_filtro)
-                else:
-                    st.warning("No se pudieron extraer productos. Verifica la columna 'Detalle'.")
-
-            # 2. ANÁLISIS TEMPORAL
-            with tab_tiempos:
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.subheader("Ventas por Hora (Mapa de Calor)")
-                    df_horas = analista.df[analista.df["Es_Valido"]==True].groupby("Hora_Num")["Monto total"].sum().reset_index()
-                    fig_hora = px.bar(df_horas, x="Hora_Num", y="Monto total", title="Horas Pico de Venta")
-                    st.plotly_chart(fig_hora, use_container_width=True)
+            # Instancia Analista Base
+            analista = AnalistaDeDatos(df_raw, tipo)
+            st.caption(f"Tipo: {tipo} | Filas: {len(df_raw)}")
+            
+            # -------------------------------------------------------
+            #                     REPORTE VENTAS
+            # -------------------------------------------------------
+            if tipo == "VENTAS":
+                # KPIs Header
+                kpis = analista.get_kpis_financieros() # Esto ya NO incluye Yango
+                monto_alquiler = analista.get_kpi_alquileres() # Esto ES solo Yango
+                c1, c2, c3, c4, c5 = st.columns(5)
+            
+                c1.metric("Ventas Operativas", f"Bs {kpis.get('Ventas Totales',0):,.0f}", help="Venta de productos (Sin alquileres)")
+                c2.metric("Ticket Promedio", f"Bs {kpis.get('Ticket Promedio',0):,.0f}")
+                c3.metric("Transacciones", kpis.get('Transacciones',0))
+                c4.metric("Descuentos", f"Bs {kpis.get('Total Descuentos',0):,.0f}")
                 
-                with col2:
-                    st.subheader("Días de la Semana")
-                    orden_dias = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-                    df_dias = analista.df[analista.df["Es_Valido"]==True].groupby("Dia_Semana")["Monto total"].mean().reindex(orden_dias).reset_index()
-                    fig_dias = px.bar(df_dias, x="Dia_Semana", y="Monto total", title="Venta Promedio por Día")
-                    st.plotly_chart(fig_dias, use_container_width=True)
+                # Métrica destacada de Yango
+                c5.metric("Ingreso Yango (Alquiler)", f"Bs {monto_alquiler:,.0f}", delta_color="off", help="Membresías e Insumos facturados aparte")
+                
+                st.divider()
+                # Pestañas con TODAS las funciones implementadas
+                pestanas = st.tabs([
+                    "🍩 Productos", 
+                    "🧠 Estrategia (BCG/Pareto)", 
+                    "🛒 Combos (Basket)", 
+                    "👥 Clientes (Recurrencia)", 
+                    "⚠️ Auditoría",
+                    "⏰ Tiempos", 
+                    "💳 Pagos"
+                ])
+                
+                # 1. Productos Básicos
+                with pestanas[0]:
+                    df_p = analista.analizar_productos()
+                    if df_p is not None:
+                        c_a, c_b = st.columns([2,1])
+                        with c_a:
+                            top = df_p.groupby("Producto")["Cantidad"].sum().nlargest(15).reset_index()
+                            st.plotly_chart(px.bar(top, x="Cantidad", y="Producto", orientation='h', title="Top 15 Productos"), use_container_width=True)
+                        with c_b:
+                            st.subheader("Por Canal")
+                            filtro = st.selectbox("Canal:", df_p["Tipo Orden"].unique())
+                            top_f = df_p[df_p["Tipo Orden"]==filtro].groupby("Producto")["Cantidad"].sum().nlargest(10)
+                            st.table(top_f)
+                
+                # 2. Estrategia (BCG y Pareto)
+                with pestanas[1]:
+                    c_bcg, c_par = st.columns(2)
+                    with c_bcg:
+                        st.subheader("Matriz BCG (Crecimiento vs Ventas)")
+                        df_bcg = analista.bcg_matrix()
+                        if df_bcg is not None:
+                            fig_bcg = px.scatter(df_bcg, x="revenue_total", y="growth", color="category", hover_name="producto", size="revenue_total")
+                            st.plotly_chart(fig_bcg, use_container_width=True)
+                            with st.expander("Ver datos BCG"): st.dataframe(df_bcg)
+                        else: st.info("No hay suficientes datos históricos para BCG.")
+                    
+                    with c_par:
+                        st.subheader("Productos VIP (Ley de Pareto)")
+                        df_vip = analista.vip_products()
+                        if df_vip is not None:
+                            vips = df_vip[df_vip["VIP"]==True]
+                            st.metric("Cantidad Productos VIP", len(vips))
+                            st.write(f"Estos {len(vips)} productos hacen el 20% de tu venta.")
+                            st.dataframe(vips[["share", "cumsum"]].head(len(vips)+5))
 
-            # 3. ANÁLISIS DE MESEROS
-            with tab_meseros:
-                df_meseros = analista.performance_meseros()
-                if df_meseros is not None:
-                    st.subheader("Rendimiento del Personal")
-                    
-                    # Gráfico combinado: Barras (Ventas) y Línea (% Anulación)
-                    # Esto es avanzado en Plotly, usamos scatter y bar
-                    import plotly.graph_objects as go
-                    
-                    fig = go.Figure()
-                    fig.add_trace(go.Bar(
-                        x=df_meseros["Mesero"], y=df_meseros["Total_Vendido"], name="Ventas (Bs)",
-                        marker_color='green'
-                    ))
-                    fig.add_trace(go.Scatter(
-                        x=df_meseros["Mesero"], y=df_meseros["% Anulacion"], name="% Anulación",
-                        yaxis="y2", mode='lines+markers', line=dict(color='red')
-                    ))
-                    
-                    fig.update_layout(
-                        title="Ventas vs Calidad Operativa (% Anulaciones)",
-                        yaxis=dict(title="Ventas (Bs)"),
-                        yaxis2=dict(title="% Anulaciones", overlaying="y", side="right")
-                    )
-                    st.plotly_chart(fig, use_container_width=True)
-                    
-                    with st.expander("Ver tabla detallada de meseros"):
-                        st.dataframe(df_meseros)
+                # 3. Market Basket
+                with pestanas[2]:
+                    st.subheader("Análisis de Canasta (Productos comprados juntos)")
+                    mb = analista.market_basket_rules()
+                    if mb is not None:
+                        st.dataframe(mb, use_container_width=True)
+                    else: st.info("No se encontraron patrones fuertes de combinación.")
 
-            # 4. MÉTODOS DE PAGO
-            with tab_pagos:
-                df_fp = analista.metodos_pago_complejos()
-                if df_fp is not None:
-                    st.subheader("Frecuencia de Métodos de Pago")
-                    fig_fp = px.pie(df_fp, names=df_fp.columns[0], values="Frecuencia", hole=0.4)
-                    st.plotly_chart(fig_fp)
+                # 4. Clientes y Recurrencia
+                with pestanas[3]:
+                    rec = analista.recurrence_analysis()
+                    if rec:
+                        cc1, cc2, cc3 = st.columns(3)
+                        cc1.metric("Clientes Recurrentes", rec.get('recurrent_clients',0))
+                        if rec.get('mean_days_between'):
+                            cc2.metric("Frecuencia de Visita", f"Cada {rec['mean_days_between']:.1f} días")
+                        cc3.metric("Ticket Recurrente vs Nuevo", f"{rec.get('ticket_prom_freq',0):.1f} vs {rec.get('ticket_prom_new',0):.1f}")
+                        
+                        st.subheader("Top Clientes Ballena")
+                        ballenas = analista.clientes_ballena()
+                        if ballenas is not None: st.dataframe(ballenas)
 
-        # --- LÓGICA PARA OTROS REPORTES ---
-        elif tipo_reporte_detectado == "INDICE":
-            st.info("Análisis simplificado para Índice (Se recomienda usar Ventas para más detalle).")
-            st.dataframe(analista.df.head())
+                # 5. Auditoría y Problemas
+                with pestanas[4]:
+                    col_prob, col_anul = st.columns(2)
+                    with col_prob:
+                        st.subheader("Productos Problemáticos")
+                        probs = analista.productos_problematicos()
+                        if probs:
+                            st.write("**Más Anulados:**")
+                            st.dataframe(probs["anulaciones"].head(5))
+                            st.write("**Más Descontados:**")
+                            st.dataframe(probs["descuentos"].head(5))
+                    
+                    with col_anul:
+                        st.subheader("Control de Caja")
+                        ctrl = analista.control_anulados_y_pendientes()
+                        if ctrl:
+                            st.metric("Total Anulado", f"Bs {ctrl['anulados_monto']:,.2f}")
+                            st.metric("Pendiente de Pago", f"Bs {ctrl['pendientes_monto']:,.2f}")
+                            if ctrl['pendientes_por_cliente'] is not None:
+                                st.write("Deudores:")
+                                st.dataframe(ctrl['pendientes_por_cliente'])
+
+                # 6. Tiempos (Ventas por hora)
+                with pestanas[5]:
+                    c_t1, c_t2 = st.columns(2)
+                    df_h = analista.ventas_por_tiempo("H")
+                    if not df_h.empty:
+                        c_t1.subheader("Mapa de Calor Horario")
+                        c_t1.plotly_chart(px.bar(df_h, x=df_h.columns[0], y="Monto total"), use_container_width=True)
+                    
+                    heat = analista.weekly_heatmap()
+                    if heat is not None:
+                        c_t2.subheader("Intensidad Semanal")
+                        c_t2.plotly_chart(px.imshow(heat.T, aspect="auto"), use_container_width=True)
+
+                # 7. Pagos
+                with pestanas[6]:
+                    analisis_pagos = analista.analisis_pagos_avanzado()
+                
+                    if analisis_pagos:
+                        # 1. Gráficos Generales
+                        c_p1, c_p2 = st.columns(2)
+                        
+                        with c_p1:
+                            st.subheader("Distribución por Cantidad de Ventas")
+                            # Gráfico de Torta basado en Transacciones (No en monto)
+                            fig_p = px.pie(analisis_pagos["general"], names="Métodos de pago", values="Transacciones", hole=0.4)
+                            st.plotly_chart(fig_p, use_container_width=True)
+                            
+                        with c_p2:
+                            st.subheader("Ticket Promedio por Método")
+                            # Gráfico de Barras para ver quién gasta más
+                            fig_tp = px.bar(analisis_pagos["general"], x="Métodos de pago", y="Ticket_Promedio", 
+                                            color="Ticket_Promedio", title="¿Quién gasta más?")
+                            st.plotly_chart(fig_tp, use_container_width=True)
+
+                        # 2. Desglose por Tipo de Orden
+                        if analisis_pagos["por_tipo_orden"] is not None:
+                            st.subheader("Métodos de Pago por Canal (Tipo de Orden)")
+                            # Convertimos la matriz a formato largo para graficar fácil
+                            df_melt = analisis_pagos["por_tipo_orden"].melt(id_vars="Métodos de pago", var_name="Canal", value_name="Transacciones")
+                            
+                            fig_stack = px.bar(df_melt, x="Canal", y="Transacciones", color="Métodos de pago", 
+                                            title="Preferencia de Pago según Canal", barmode="stack")
+                            st.plotly_chart(fig_stack, use_container_width=True)
+                        
+                        # Tabla detalle
+                        with st.expander("Ver Tabla Financiera Detallada"):
+                            st.dataframe(analisis_pagos["general"].style.format({"Venta_Total": "Bs {:,.2f}", "Ticket_Promedio": "Bs {:,.2f}"}))
+                    else:
+                        st.info("No se encontraron datos de métodos de pago.")
+            # -------------------------------------------------------
+            #                     REPORTE INDICE
+            # -------------------------------------------------------
+            elif tipo == "INDICE":
+                st.info("Reporte Operativo Detectado. Usando AnalistaOperacional en modo individual.")
+                
+                # Usamos la clase Operacional aunque sea solo un archivo
+                ops = AnalistaOperacional(df_ventas=None, df_indice=df_raw)
+                
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.subheader("⏱️ Velocidad (Creado -> Pagado)")
+                    kpis_vel, df_vel = ops.kpis_velocidad()
+                    if kpis_vel:
+                        st.metric("Tiempo Promedio", f"{kpis_vel['Tiempo Promedio Global']:.1f} min")
+                        st.metric("Ticket Más Lento", f"{kpis_vel['Ticket Más Lento']:.1f} min")
+                        st.plotly_chart(px.histogram(df_vel, x="Minutos_Servicio"), use_container_width=True)
+                    else: st.warning("Faltan columnas de fecha en este reporte.")
+                
+                with c2:
+                    st.subheader("🪑 Ocupación de Mesas")
+                    hm = ops.heatmap_mesas()
+                    if hm is not None:
+                        # medir/colorear por número de ocupaciones (veces que se usó la mesa)
+                        color_col = "Ocupaciones" if "Ocupaciones" in hm.columns else (
+                                    "Facturacion_Total" if "Facturacion_Total" in hm.columns else None)
+                        if color_col:
+                            fig = px.treemap(hm, path=['Mesa_Real'], values='Ocupaciones', color=color_col)
+                        else:
+                            fig = px.treemap(hm, path=['Mesa_Real'], values='Ocupaciones')
+                        st.plotly_chart(fig, width='stretch')
+                    else: st.warning("No hay información de mesas.")
             
-        else:
-            st.warning("Formato de reporte no reconocido para análisis avanzado.")
-            st.dataframe(df_raw)
-    except Exception as e:
-        st.error(f"No se pudo leer el archivo {archivo_seleccionado}: {e}")
+            else:
+                st.warning("Formato desconocido.")
+                st.dataframe(df_raw)
 
-else:
-    # ESTE ES EL BLOQUE "ELSE" QUE RESTAURA LA SUBIDA MANUAL
+# ==============================================================================
+#                           MODO 2: ANÁLISIS MAESTRO
+# ==============================================================================
+elif modo_app == "🔗 Análisis Maestro (Fusión)":
+    st.header("🔗 Fusión de Datos: Ventas + Operaciones")
     
-    st.warning("⚠️ No se encontraron datos recientes en la carpeta 'data/reportes'.")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.info("🤖 **Opción 1: Usar el Robot**\n\nVe a la barra lateral (izquierda), elige las fechas y dale a 'Descargar'.")
+    if len(archivos) < 2:
+        st.error("Se requieren al menos 2 archivos.")
+        st.stop()
 
-    with col2:
-        st.info("📂 **Opción 2: Subida Manual**\n\nSi ya tienes el archivo descargado, súbelo aquí:")
+    c1, c2 = st.columns(2)
+    # Filtros de ayuda
+    f_v = [f for f in archivos if "ventas" in f.lower()] or archivos
+    f_i = [f for f in archivos if "indice" in f.lower()] or archivos
+    
+    file_v = c1.selectbox("Archivo VENTAS:", f_v, key="m_v")
+    file_i = c2.selectbox("Archivo ÍNDICE:", f_i, key="m_i")
+    
+    if st.button("🚀 Fusionar"):
+        df_v = cargar_df(file_v)
+        df_i = cargar_df(file_i)
         
-        uploaded_file = st.file_uploader("Arrastra tu reporte aquí", type=['csv', 'xlsx'])
-        
-        if uploaded_file:
-            # 1. Asegurar que la carpeta existe
-            carpeta_destino = os.path.join(os.getcwd(), "data", "reportes")
-            if not os.path.exists(carpeta_destino):
-                os.makedirs(carpeta_destino)
+        if df_v is not None and df_i is not None:
+            ops = AnalistaOperacional(df_v, df_i)
+            st.success(f"Fusión exitosa: {len(ops.df_maestro)} registros combinados.")
             
-            # 2. Limpieza preventiva (opcional, para no mezclar manual con robot)
-            # Si quieres que lo manual reemplace a lo anterior, borra todo antes
-            files = glob.glob(os.path.join(carpeta_destino, "*"))
-            for f in files:
-                try: os.remove(f)
-                except: pass
+            tab_v, tab_m = st.tabs(["⏱️ Velocidad por Canal", "🪑 Rentabilidad Mesas"])
+            
+            with tab_v:
+                kpis, df_vel = ops.kpis_velocidad()
+                if kpis:
+                    m1, m2, m3 = st.columns(3)
+                    m1.metric("Global", f"{kpis['Tiempo Promedio Global']:.1f} min")
+                    m2.metric("Mesa", f"{kpis.get('Promedio Mesa',0):.1f} min")
+                    m3.metric("Delivery", f"{kpis.get('Promedio Delivery',0):.1f} min")
+                    st.plotly_chart(px.box(df_vel, x="Tipo_Orden", y="Minutos_Servicio", points="all"), use_container_width=True)
+            
+            with tab_m: # Tab Mesas en Fusión
+                hm = ops.heatmap_mesas()
+                if hm is not None:
+                    c_map1, c_map2 = st.columns([2, 1])
+                    
+                    with c_map1:
+                        st.subheader("Mapa de Calor: Frecuencia de Uso")
+                        # CAMBIO: El tamaño es la ocupación (veces usado), el color es el ticket promedio
+                        # Así ves: Mesas muy usadas (Grande) y si gastan mucho o poco (Rojo/Azul)
+                        fig_tree = px.treemap(
+                            hm, 
+                            path=['Mesa_Real'], 
+                            values='Ocupaciones', 
+                            color='Ticket_Promedio',
+                            color_continuous_scale='RdBu', 
+                            title="Tamaño = Cantidad Visitas | Color = Ticket Promedio"
+                        )
+                        st.plotly_chart(fig_tree, use_container_width=True)
+                    
+                    with c_map2:
+                        st.subheader("Top Mesas (Por Visitas)")
+                        # Tabla simple ordenada por ocupación
+                        st.dataframe(
+                            hm[['Mesa_Real', 'Ocupaciones', 'Ticket_Promedio']].head(15)
+                            .style.format({"Ticket_Promedio": "Bs {:,.2f}"})
+                        )
+                else:
+                    st.warning("No se encontraron datos de mesas.")
 
-            # 3. Guardar el archivo subido
-            ruta_final = os.path.join(carpeta_destino, uploaded_file.name)
-            with open(ruta_final, "wb") as f:
-                f.write(uploaded_file.getbuffer())
-            
-            st.success(f"✅ Archivo '{uploaded_file.name}' cargado. Actualizando...")
-            time.sleep(1) # Dar tiempo al sistema de archivos
-            st.rerun()
+# ==============================================================================
+#                           MODO 0: PANTALLA ROBOT
+# ==============================================================================
+elif modo_app == "🤖 Robot Descargas":
+    st.info("👈 Configura la descarga en el panel izquierdo.")
+    st.image("https://media.giphy.com/media/L1R1TV7J2Zbu6qPiOE/giphy.gif", width=300) # Un toque visual
+    
+    with st.expander("Ver historial de archivos"):
+        df_files = pd.DataFrame({"Archivos en sistema": archivos})
+        st.dataframe(df_files, use_container_width=True)
