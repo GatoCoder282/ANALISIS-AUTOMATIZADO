@@ -49,29 +49,25 @@ class AnalistaDeDatos:
             if "Detalle" in df.columns:
                 # Buscamos patrones específicos al inicio del string
                 # Nota: Manejamos tanto 'x' como '×' por si acaso
-                patron_yango = r"1[x×]\s*Cuota de membresía por Oficina C&C \(|1[x×]\s*Entrega de insumos \("
+                patron_yango = r"\d[x×]\s*Cuota de membresía por Oficina C&C \(|1[x×]\s*Entrega de insumos \("
                 
                 df["Es_Alquiler"] = df["Detalle"].astype(str).str.contains(patron_yango, regex=True, case=False)
             else:
                 df["Es_Alquiler"] = False
 
-            # Definición de Válido (Pagado y No Anulado)
             df["Es_Valido"] = (df["Estado_Norm"] == "PAGADO") & (df["Validez_Norm"] == "VÁLIDO")
-            
-            # --- REGLA DE NEGOCIO CRÍTICA ACTUALIZADA ---
-            # Venta Real = Válida AND No es Interno AND No es Alquiler Yango
             df["Es_Venta_Real"] = df["Es_Valido"] & (df["Tipo_Norm"] != "INTERNO") & (~df["Es_Alquiler"])
+            df["Es_Interno"] = df["Es_Valido"] & (df["Tipo_Norm"] == "INTERNO")
+            df["Es_Valido_Pago_Pendiente"] = (df["Estado_Norm"] != "PAGADO") & (df["Validez_Norm"] == "VÁLIDO")
             
         elif self.tipo == "INDICE":
             if "Creado el" in df.columns:
                 df["Fecha_DT"] = pd.to_datetime(df["Creado el"], dayfirst=True, errors='coerce')
             
             if "Estado" in df.columns: df["Estado_Norm"] = df["Estado"].astype(str).str.upper()
-            
-            # En Índice no tenemos "Detalle", así que no podemos filtrar Yango por producto aquí.
-            # Asumimos que el análisis financiero pesado se hace en VENTAS.
+    
             if "Anulado" in df.columns:
-                df["Es_Valido"] = (df["Estado_Norm"] == "PAGADO") & (df["Anulado"] == "No")
+                df["Es_Valido"] = (df["Estado_Norm"] == "PAGADO") & (df["Anulado"].astype(str).str.upper() == "NO")
             else:
                 df["Es_Valido"] = df["Estado_Norm"] == "PAGADO"
 
@@ -110,55 +106,98 @@ class AnalistaDeDatos:
             return {}
         # trabajamos sobre copia y excluimos alquileres
         df = self._excluir_alquiler(self.df.copy())
-        # Solo ventas reales (Pagadas, Válidas, No Interno)
-        df_real = df[df["Es_Venta_Real"] == True]
+        # --- BASES DE FILTRADO ---
+        df_real       = df[df["Es_Venta_Real"]]             # Ventas reales, pagadas, válidas
+        df_validas    = df[df["Es_Valido"]]                 # Para descuentos
+        df_internas   = df[df["Es_Interno"]]                # Ventas internas válidas
+        df_pendientes = df[df["Es_Valido_Pago_Pendiente"]]  # Válidas pero con pago pendiente
+        
         
         total_ventas = df_real.get("Monto total", pd.Series(dtype=float)).sum()
         num_transacciones = len(df_real)
         ticket_promedio = total_ventas / num_transacciones if num_transacciones > 0 else 0
-        
-        # Para el KPI de descuentos, usamos todas las válidas (incluso internos pueden tener descuento)
-        df_validas = df[df["Es_Valido"] == True]
+        total_descuentos = df_validas["Descuento"].sum()
+        total_pendiente = df_pendientes["Monto total"].sum()
+        total_interno = df_internas["Monto total"].sum() if not df_internas.empty else 0
+        total_pagado = total_ventas
+        ratio_pagado = total_pagado / (total_pagado + total_pendiente) if (total_pagado + total_pendiente) > 0 else 0
+
         
         return {
             "Ventas Totales": total_ventas,
             "Transacciones": num_transacciones,
             "Ticket Promedio": ticket_promedio,
-            "Total Descuentos": df_validas["Descuento"].sum()
-        }
+            "Total Descuentos": total_descuentos,
+            "Ventas Pendientes": total_pendiente,
+            "Consumo Interno": total_interno,
+            "Ratio Pagado": ratio_pagado,
+            }
 
     def analizar_productos(self):
         """
-        Desglosa la columna 'Detalle' usando Regex para '1x Producto' o '1× Producto'
+        Desglosa la columna 'Detalle' separando Producto Base de sus Variantes.
         """
         if self.tipo != "VENTAS" or "Detalle" not in self.df.columns:
             return None
-        # preparar df: excluir alquileres y filtrar válidas
+
+        # 1. Preparar DF
         df_analisis = self._excluir_alquiler(self.df.copy())
         df_analisis = df_analisis[df_analisis["Es_Valido"] == True].copy()
         
         items_vendidos = []
         
-        # Regex: Busca un número, seguido de 'x' o '×', espacios, y el nombre
-        # Detiene la búsqueda antes del siguiente número+x o el final
-        patron = r'(\d+)\s*[x×]\s*(.+?)(?=\s\d+\s*[x×]|$)'
+        # 2. NUEVO REGEX AVANZADO
+        # Grupo 1: Cantidad
+        # Grupo 2: Producto Base (hasta encontrar ':', '.', '(' o el final)
+        # Grupo 3: Variantes (Opcional, lo que sigue después de los separadores)
+        # Lookahead: Se detiene antes del siguiente "1x" o el final de la línea
+        patron_item = r'(\d+)\s*[x×]\s*(.+?)(?=\s+\d+\s*[x×]|$)'
+
+        # --- PASO 2: PATRÓN DE LIMPIEZA DE NOMBRE ---
+        # Separa "Cappuccino (Leche almendra)" en "Cappuccino" y "Leche almendra"
+        # Corta en ':', '(', o '.'
+        patron_variante = r'^([^(:.]+)(?:[\(:\.]\s*(.+?)\)?)?$'
 
         for _, row in df_analisis.iterrows():
-            detalle = str(row["Detalle"])
-            # Buscamos todas las coincidencias en el string
-            matches = re.findall(patron, detalle)
+            detalle = str(row["Detalle"]).replace("\n", " ") # Limpiar saltos de línea
             
-            for cantidad, producto in matches:
+            # Paso 1: Encontrar todos los items en el string gigante
+            matches_items = re.findall(patron_item, detalle)
+            
+            for cantidad, nombre_sucio in matches_items:
+                nombre_sucio = nombre_sucio.strip()
+                
+                # Paso 2: Diseccionar el nombre sucio
+                match_var = re.search(patron_variante, nombre_sucio)
+                
+                if match_var:
+                    p_base = match_var.group(1).strip().title()
+                    # Si hay grupo 2 (variante), lo usamos, sino es Original
+                    p_var = match_var.group(2).strip() if match_var.group(2) else "Original/Sin Cambios"
+                else:
+                    # Fallback por si acaso (raro)
+                    p_base = nombre_sucio.title()
+                    p_var = "Original/Sin Cambios"
+
+                # Nombre completo legible
+                p_completo = f"{p_base} ({p_var})" if p_var != "Original/Sin Cambios" else p_base
+
                 items_vendidos.append({
-                    "Producto": producto.strip(),
+                    "Producto_Base": p_base,
+                    "Variante": p_var,
+                    "Producto_Completo": p_completo,
                     "Cantidad": int(cantidad),
-                    "Fecha": row["Dia"],
-                    "Hora": row["Hora_Num"],
+                    "Producto": p_base, # Retrocompatibilidad con funciones viejas que usaban 'Producto'
+                    "Fecha": row.get("Dia"),
+                    "Hora": row.get("Hora_Num"),
                     "Tipo Orden": row.get("Tipo de orden", "Desconocido"),
                     "Mesero": row.get("Mesero", "Sin Asignar"),
-                    "Id_Venta": row["Id"]
+                    "Id_Venta": row.get("Id")
                 })
         
+        if not items_vendidos:
+            return None
+            
         return pd.DataFrame(items_vendidos)
 
     def performance_meseros(self):

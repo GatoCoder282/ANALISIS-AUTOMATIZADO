@@ -44,7 +44,7 @@ def cargar_df(nombre_archivo):
 #                                   SIDEBAR
 # ==============================================================================
 with st.sidebar:
-    st.image("https://via.placeholder.com/150", caption="C&C Cafetería")
+    st.image("./images/CoffeeAndCompany_Marca-06.png", caption="C&C Cafetería")
     st.title("🎛️ Navegación")
     
     modo_app = st.radio("Módulo:", 
@@ -120,16 +120,20 @@ if modo_app == "📊 Análisis Individual":
                 # KPIs Header
                 kpis = analista.get_kpis_financieros() # Esto ya NO incluye Yango
                 monto_alquiler = analista.get_kpi_alquileres() # Esto ES solo Yango
-                c1, c2, c3, c4, c5 = st.columns(5)
-            
+                c1, c2, c3, c4 = st.columns(4)
+
                 c1.metric("Ventas Operativas", f"Bs {kpis.get('Ventas Totales',0):,.0f}", help="Venta de productos (Sin alquileres)")
                 c2.metric("Ticket Promedio", f"Bs {kpis.get('Ticket Promedio',0):,.0f}")
                 c3.metric("Transacciones", kpis.get('Transacciones',0))
                 c4.metric("Descuentos", f"Bs {kpis.get('Total Descuentos',0):,.0f}")
-                
-                # Métrica destacada de Yango
-                c5.metric("Ingreso Yango (Alquiler)", f"Bs {monto_alquiler:,.0f}", delta_color="off", help="Membresías e Insumos facturados aparte")
-                
+
+                c5, c6, c7, c8 = st.columns(4)
+
+                c5.metric("Pendientes", f"Bs {kpis['Ventas Pendientes']:,.0f}")
+                c6.metric("Consumo Interno", f"Bs {kpis['Consumo Interno']:,.0f}")
+                c7.metric("Ingreso Yango (Alquiler)", f"Bs {monto_alquiler:,.0f}", delta_color="off", help="Membresías e Insumos facturados aparte")
+                c8.metric("Cobranza (%)", f"{kpis['Ratio Pagado']*100:,.1f}%")
+
                 st.divider()
                 # Pestañas con TODAS las funciones implementadas
                 pestanas = st.tabs([
@@ -142,19 +146,66 @@ if modo_app == "📊 Análisis Individual":
                     "💳 Pagos"
                 ])
                 
-                # 1. Productos Básicos
-                with pestanas[0]:
+                with pestanas[0]: # Pestaña Productos
                     df_p = analista.analizar_productos()
+                    
                     if df_p is not None:
-                        c_a, c_b = st.columns([2,1])
-                        with c_a:
-                            top = df_p.groupby("Producto")["Cantidad"].sum().nlargest(15).reset_index()
-                            st.plotly_chart(px.bar(top, x="Cantidad", y="Producto", orientation='h', title="Top 15 Productos"), use_container_width=True)
-                        with c_b:
-                            st.subheader("Por Canal")
-                            filtro = st.selectbox("Canal:", df_p["Tipo Orden"].unique())
-                            top_f = df_p[df_p["Tipo Orden"]==filtro].groupby("Producto")["Cantidad"].sum().nlargest(10)
-                            st.table(top_f)
+                        st.subheader("🏆 Top Productos (Agrupados)")
+                        
+                        col_top, col_pie = st.columns([2, 1])
+                        
+                        with col_top:
+                            # Agrupamos por Producto BASE (ignorando si es con leche light o normal)
+                            top_base = df_p.groupby("Producto_Base")["Cantidad"].sum().nlargest(15).reset_index()
+                            fig_base = px.bar(top_base, x="Cantidad", y="Producto_Base", orientation='h', 
+                                            text_auto=True, title="Lo más vendido (Sin variantes)", color="Cantidad")
+                            st.plotly_chart(fig_base, use_container_width=True)
+                        
+                        with col_pie:
+                            st.write("### Mix por Canal")
+                            filtro_canal = st.selectbox("Filtrar Top por Canal:", df_p["Tipo Orden"].unique())
+                            top_f = df_p[df_p["Tipo Orden"]==filtro_canal].groupby("Producto_Base")["Cantidad"].sum().nlargest(10).reset_index()
+                            st.dataframe(top_f, hide_index=True)
+
+                        st.divider()
+                        
+                        # --- NIVEL 2: ANÁLISIS DE VARIANTES (DRILL-DOWN) ---
+                        c_drill1, c_drill2 = st.columns(2)
+                        
+                        with c_drill1:
+                            st.subheader("🔍 Analizar Variantes de un Producto")
+                            # Selectbox con los productos base ordenados alfabéticamente
+                            lista_productos = sorted(df_p["Producto_Base"].unique())
+                            producto_elegido = st.selectbox("Selecciona un producto para ver sus sabores/detalles:", lista_productos, index=0)
+                            
+                            # Filtramos data
+                            df_filtrado = df_p[df_p["Producto_Base"] == producto_elegido]
+                            # Contamos variantes
+                            vars_count = df_filtrado.groupby("Variante")["Cantidad"].sum().reset_index()
+                            
+                            if not vars_count.empty:
+                                fig_var = px.pie(vars_count, values="Cantidad", names="Variante", 
+                                               title=f"Desglose de: {producto_elegido}", hole=0.4)
+                                st.plotly_chart(fig_var, use_container_width=True)
+                            else:
+                                st.info("Este producto no tiene variantes registradas.")
+
+                        # --- NIVEL 3: VARIANTES GLOBALES (TRANSVERSAL) ---
+                        with c_drill2:
+                            st.subheader("📊 Modificadores más comunes (Global)")
+                            # Excluimos "Original/Sin Cambios" para ver solo las modificaciones reales
+                            df_vars_real = df_p[df_p["Variante"] != "Original/Sin Cambios"]
+                            
+                            if not df_vars_real.empty:
+                                top_vars = df_vars_real.groupby("Variante")["Cantidad"].sum().nlargest(10).reset_index()
+                                fig_global_vars = px.bar(top_vars, x="Cantidad", y="Variante", 
+                                                       title="Top Agregados/Cambios en todo el menú", color_discrete_sequence=["#FF6692"])
+                                st.plotly_chart(fig_global_vars, use_container_width=True)
+                            else:
+                                st.info("No hay suficientes datos de variantes específicas.")
+
+                    else:
+                        st.warning("No se pudieron procesar los productos. Verifica la columna 'Detalle'.")
                 
                 # 2. Estrategia (BCG y Pareto)
                 with pestanas[1]:
