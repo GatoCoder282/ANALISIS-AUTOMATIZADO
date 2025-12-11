@@ -1,17 +1,24 @@
 import time
 import os
+import glob
+from pathlib import Path
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
-import glob
 
 class RobotMercat:
+    DEFAULT_WAIT = 20
+    PROGRESS_WAIT = 60
+    DOWNLOAD_WAIT = 45
+
     def __init__(self, download_folder):
-        self.download_folder = download_folder
-        
+        # Asegurar folder y usar Path
+        self.download_folder = str(Path(download_folder).resolve())
+        Path(self.download_folder).mkdir(parents=True, exist_ok=True)
+
         options = webdriver.ChromeOptions()
         prefs = {
             "download.default_directory": self.download_folder,
@@ -20,241 +27,237 @@ class RobotMercat:
             "safebrowsing.enabled": True
         }
         options.add_experimental_option("prefs", prefs)
-        
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        # options.add_argument("--headless=new")  # activar si lo necesitas
+
         self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        self.wait = WebDriverWait(self.driver, 15) # 15 seg de espera máxima
+        self.wait = WebDriverWait(self.driver, self.DEFAULT_WAIT)
 
     def login(self, usuario, password):
-        """Inicia sesión en el ERP"""
+        """Inicia sesión en el ERP con espera robusta."""
         try:
-            print("🔵 Iniciando sesión...")
             self.driver.get("https://www.mercat.bo/users/sign_in")
-            
-            # Usamos IDs fijos del login que me diste antes (o user_login si ese es el real)
-            # Nota: En tu código anterior usaste las constantes USUARIO como ID, cuidado ahí.
-            # Basado en tu html anterior, el ID suele ser 'user_login'
             user_field = self.wait.until(EC.element_to_be_clickable((By.ID, "user_login")))
             user_field.clear()
             user_field.send_keys(usuario)
-            
-            pass_field = self.driver.find_element(By.ID, "user_password")
+
+            pass_field = self.wait.until(EC.presence_of_element_located((By.ID, "user_password")))
             pass_field.clear()
             pass_field.send_keys(password)
-            
-            btn_ingresar = self.driver.find_element(By.NAME, "commit")
-            btn_ingresar.click()
-            
-            print("✅ Login enviado.")
-            # Esperar a que cargue la siguiente página (buscando un elemento del dashboard o simplemente esperando un poco)
-            time.sleep(3) 
-            
+
+            btn_ingresar = self.wait.until(EC.element_to_be_clickable((By.NAME, "commit")))
+            self.driver.execute_script("arguments[0].click();", btn_ingresar)
+
+            # Espera mínima de transición
+            self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "navbar")))
+            time.sleep(0.5)
+            return True
         except Exception as e:
             print(f"❌ Error en Login: {e}")
+            return False
+
+
+    def _formatear_datetime(self, valor, selector_valor, tipo):
+        """Devuelve fecha/hora con extremos para from/to."""
+        s = str(valor).strip()
+        if tipo == 'datetime':
+            if len(s) <= 10:  # solo fecha dd/mm/yyyy
+                if 'from' in selector_valor.lower():
+                    return f"{s} 00:00"
+                if 'to' in selector_valor.lower():
+                    return f"{s} 23:59"
+        return s
+    
 
     def _llenar_campo(self, selector_info, valor_a_ingresar):
-        """Método auxiliar robusto para llenar campos"""
-        tipo_selector = getattr(By, selector_info['by'].upper()) 
-        selector_valor = selector_info['valor']
-        
-        # Esperamos que el elemento exista
-        elemento = self.wait.until(EC.presence_of_element_located((tipo_selector, selector_valor)))
-        
-        if selector_info['tipo'] == 'text':
-            # ESTRATEGIA 1: Limpiar y escribir (La normal)
-            try:
-                elemento.clear()
-                elemento.send_keys(valor_a_ingresar)
-                
-                # ESTRATEGIA 2: Forzar valor con JS (Si el datepicker es rebelde)
-                # Esto sobreescribe el valor interno del input directamente
-                self.driver.execute_script("arguments[0].value = arguments[1];", elemento, valor_a_ingresar)
-                
-                # Opcional: Disparar evento 'change' para que la página sepa que cambió
-                self.driver.execute_script("arguments[0].dispatchEvent(new Event('change'));", elemento)
-                
-            except Exception as e:
-                print(f"⚠️ Error escribiendo en {selector_valor}, intentando solo JS...")
-                self.driver.execute_script("arguments[0].value = arguments[1];", elemento, valor_a_ingresar)
+        """Llena campos compatibles con config_reportes.py."""
+        by = selector_info.get('by', '').upper()
+        selector_valor = selector_info.get('valor', '')
+        tipo_campo = selector_info.get('tipo', 'text')
 
-        elif selector_info['tipo'] == 'select':
-            # ... (El código del select se mantiene igual) ...
-            select = Select(elemento)
-            try:
-                select.select_by_value(str(valor_a_ingresar))
-            except:
-                select.select_by_visible_text(str(valor_a_ingresar))
+        if not by or not selector_valor:
+            print(f"⚠️ Config de campo inválida: {selector_info}")
+            return
+
+        tipo_selector = getattr(By, by)
+
+        # Override con valor fijo
+        if 'valor_fijo' in selector_info:
+            valor_a_ingresar = selector_info['valor_fijo']
+
+        try:
+            elemento = self.wait.until(EC.presence_of_element_located((tipo_selector, selector_valor)))
+
+            if tipo_campo in ['date', 'datetime', 'text']:
+                valor_fmt = self._formatear_datetime(valor_a_ingresar, selector_valor, tipo_campo if tipo_campo in ['date', 'datetime'] else 'text')
+
+                # Intento normal
+                try:
+                    elemento.clear()
+                    elemento.send_keys(valor_fmt)
+                except:
+                    pass
+
+                # ESTRATEGIA 2: Forzar valor con JS y disparar eventos
+                try:
+                    self.driver.execute_script("arguments[0].value = arguments[1];", elemento, valor_fmt)
+                    self.driver.execute_script("arguments[0].dispatchEvent(new Event('input'));", elemento)
+                    self.driver.execute_script("arguments[0].dispatchEvent(new Event('change'));", elemento)
+                except Exception as e:
+                    print(f"⚠️ JS set value falló en {selector_valor}: {e}")
+
+                # Cerrar popup del date/datetime picker
+                try:
+                    self.driver.find_element(By.TAG_NAME, 'body').click()
+                except:
+                    pass
+
+            elif tipo_campo == 'select':
+                select = Select(elemento)
+                try:
+                    select.select_by_value(str(valor_a_ingresar))
+                except:
+                    try:
+                        select.select_by_visible_text(str(valor_a_ingresar))
+                    except:
+                        print(f"⚠️ No se pudo seleccionar '{valor_a_ingresar}' en {selector_valor}")
+
+            elif tipo_campo == 'checkbox':
+                debe_estar_marcado = str(valor_a_ingresar).lower() in ['true', '1', 'on', 'yes', 'sí', 'si']
+                esta_marcado = elemento.is_selected()
+                if debe_estar_marcado != esta_marcado:
+                    self.driver.execute_script("arguments[0].click();", elemento)
+
+            else:
+                print(f"⚠️ Tipo de campo desconocido: {tipo_campo}")
+
+        except Exception as e:
+            print(f"⚠️ Error llenando campo {selector_valor}: {e}")
+
+    def _esperar_barra_progreso(self):
+        """Espera barra de progreso 100%, tolerante si no aparece."""
+        try:
+            wait_barra = WebDriverWait(self.driver, 5)
+            barra = wait_barra.until(EC.visibility_of_element_located((By.CLASS_NAME, "progress-bar")))
+            wait_proceso = WebDriverWait(self.driver, self.PROGRESS_WAIT)
+            wait_proceso.until(lambda d: barra.get_attribute("aria-valuenow") == "100")
+            time.sleep(0.5)
+        except Exception:
+            # Puede cargar sin barra
+            pass
+
+    def _esperar_descarga_archivo(self, timeout=None, extensiones=('.csv', '.xlsx')):
+        """Espera archivo descargado evitando temporales."""
+        timeout = timeout or self.DOWNLOAD_WAIT
+        inicio = time.time()
+        while time.time() - inicio < timeout:
+            archivos = os.listdir(self.download_folder)
+            validos = [f for f in archivos if (f.endswith(extensiones)) and not f.endswith('.crdownload') and not f.endswith('.tmp')]
+            if validos:
+                return True
+            time.sleep(1)
+        print("⚠️ Tiempo agotado esperando archivo.")
+        return False
 
     def descargar_reporte(self, config_reporte, parametros):
         """
-        config_reporte: El diccionario de config_reportes.py
-        parametros: Diccionario con los valores que quieres filtrar. Ej:
-                    {'fecha_inicio': '01/11/2025', 'sucursal': '1087'}
+        Descarga cualquier reporte definido en data/config_reportes.py.
+        - Llena solo los campos presentes en 'campos'.
+        - Usa click JS para evitar overlays.
         """
         try:
-            print(f"🔵 Navegando a: {config_reporte['nombre']}...")
             self.driver.get(config_reporte['url'])
-            
-            # 1. Llenar todos los filtros recibidos
-            print("⚙️ Aplicando filtros...")
-            campos_config = config_reporte['campos']
-            
-            for clave, valor in parametros.items():
-                if clave in campos_config:
-                    self._llenar_campo(campos_config[clave], valor)
-                else:
-                    print(f"⚠️ Advertencia: El campo '{clave}' no existe en la configuración de este reporte.")
 
-            # 2. Click en GENERAR
-            print("🔄 Generando vista previa...")
-            # Esperamos a que el botón exista en el DOM
+            # 1) Llenar filtros definidos en la config
+            campos_config = config_reporte.get('campos', {})
+            for clave_config, info_campo in campos_config.items():
+                valor = parametros.get(clave_config, "")
+                self._llenar_campo(info_campo, valor)
+
+            # 2) Generar
             btn_generar = self.wait.until(EC.presence_of_element_located((By.XPATH, config_reporte['btn_generar'])))
-            
-            # Hacemos scroll hasta el botón por si acaso (ayuda visual)
             self.driver.execute_script("arguments[0].scrollIntoView();", btn_generar)
-            time.sleep(1) # Pequeña pausa para que el scroll termine
-            
-            # EL TRUCO DE MAGIA: Clic vía JavaScript (Ignora footers y overlays)
+            time.sleep(0.3)
             self.driver.execute_script("arguments[0].click();", btn_generar)
-            
-            # Esperar a que la tabla se recargue.
+
             self._esperar_barra_progreso()
 
-            # 3. Click en CSV (Descarga real)
-            print("⬇️ Descargando CSV...")
+            # 3) Descargar CSV
             btn_csv = self.wait.until(EC.presence_of_element_located((By.XPATH, config_reporte['btn_descargar_csv'])))
-            
-            # También usamos JS aquí por si el footer también tapa este botón
             self.driver.execute_script("arguments[0].scrollIntoView();", btn_csv)
             self.driver.execute_script("arguments[0].click();", btn_csv)
-            
-            # Espera de descarga
-            print("⏳ Esperando archivo...")
-            self._esperar_descarga_archivo() # (Opcional: ver punto 3 abajo)
-            print(f"✅ {config_reporte['nombre']} procesado.")
-            
+
+            # 4) Esperar archivo
+            # Para "Por_Producto" puede ser .csv o .xlsx según el sitio; aceptamos ambas.
+            self._esperar_descarga_archivo(extensiones=('.csv', '.xlsx'))
+            return True
         except Exception as e:
             print(f"❌ Error en proceso: {e}")
+            return False
 
     def cerrar(self):
-        self.driver.quit()
+        try:
+            self.driver.quit()
+        except Exception as e:
+            print(f"⚠️ Error cerrando navegador: {e}")
 
     def limpiar_carpeta_descargas(self):
-        """Borra todos los archivos .csv o .xlsx de la carpeta data para evitar confusiones"""
+        """Borra archivos descargados evitando scripts."""
         print("🧹 Limpiando carpeta de descargas...")
-        # Busca patrones de archivos
         archivos = glob.glob(os.path.join(self.download_folder, "*.*"))
-        
         for archivo in archivos:
             try:
-                # Solo borramos si no es un script de python (por seguridad)
-                if not archivo.endswith(".py"): 
+                if not archivo.endswith(".py"):
                     os.remove(archivo)
-                    print(f"   - Eliminado: {os.path.basename(archivo)}")
             except Exception as e:
                 print(f"   ! No se pudo borrar {archivo}: {e}")
         print("✨ Carpeta limpia.")
 
-
     def renombrar_ultimo_archivo(self, nuevo_nombre_base):
         """
-        Busca el CSV más reciente y lo renombra de forma segura.
-        Espera a que desaparezcan los temporales.
+        Renombra el archivo descargado más reciente manteniendo la extensión real.
         """
         try:
-            # 1. Esperar estabilidad (máximo 10 seg extra)
-            # Esperamos a que NO haya archivos .crdownload o .tmp recientes
             tiempo_espera = 0
             archivo_reciente = None
-            
-            while tiempo_espera < 10:
+
+            while tiempo_espera < 15:
                 lista_archivos = glob.glob(os.path.join(self.download_folder, "*"))
                 if not lista_archivos:
-                    time.sleep(1)
-                    tiempo_espera += 1
-                    continue
+                    time.sleep(1); tiempo_espera += 1; continue
 
-                # Tomamos el más nuevo
                 archivo_reciente = max(lista_archivos, key=os.path.getctime)
-                
-                # Si es temporal, esperamos
-                if archivo_reciente.endswith('.crdownload') or archivo_reciente.endswith('.tmp'):
-                    print(f"⏳ Descarga en curso ({os.path.basename(archivo_reciente)})... esperando.")
-                    time.sleep(1)
-                    tiempo_espera += 1
+
+                if archivo_reciente.endswith(('.crdownload', '.tmp')):
+                    time.sleep(1); tiempo_espera += 1
                 else:
-                    # ¡Es un archivo firme! Salimos del bucle
                     break
 
-            if not archivo_reciente: return None
+            if not archivo_reciente:
+                return None
 
-            # 2. Construir nombre nuevo FORZANDO .csv
-            # Limpiamos el nombre de caracteres inválidos
             nombre_limpio = "".join(c for c in nuevo_nombre_base if c.isalnum() or c in (' ', '_', '-')).strip()
-            nuevo_nombre = f"{nombre_limpio}.csv" # <--- FORZAMOS .csv AQUÍ
+            # Detectar extensión real
+            ext = ".csv"
+            if archivo_reciente.lower().endswith(".xlsx"):
+                ext = ".xlsx"
+            nuevo_nombre = f"{nombre_limpio}{ext}"
             nueva_ruta = os.path.join(self.download_folder, nuevo_nombre)
-            
-            # 3. Reemplazo seguro (Windows a veces bloquea si existe)
+
             if os.path.exists(nueva_ruta):
                 try:
                     os.remove(nueva_ruta)
-                except PermissionError:
-                    print(f"⚠️ El archivo {nuevo_nombre} está abierto, no se puede sobrescribir.")
+                except Exception as e:
+                    print(f"⚠️ No se pudo sobrescribir {nuevo_nombre}: {e}")
                     return None
 
-            # Esperar un microsegundo para liberar el lock del sistema de archivos
             time.sleep(0.5)
             os.rename(archivo_reciente, nueva_ruta)
-            
-            print(f"🏷️ Renombrado final: {nuevo_nombre}")
+            print(f"🏷️ Guardado como: {nuevo_nombre}")
             return nuevo_nombre
-            
+
         except Exception as e:
             print(f"⚠️ Error al renombrar: {e}")
             return None
         
-    def _esperar_barra_progreso(self):
-        """
-        Vigila la barra de progreso hasta que llegue al 100%
-        """
-        try:
-            # 1. Esperar a que la barra aparezca (máximo 3 seg)
-            # Usamos un wait corto aquí porque la barra debería salir casi de inmediato tras el click
-            wait_barra = WebDriverWait(self.driver, 5) 
-            
-            barra = wait_barra.until(EC.visibility_of_element_located((By.CLASS_NAME, "progress-bar")))
-            print("⏳ Procesando reporte (Barra detectada)...")
-
-            # 2. Esperar hasta que 'aria-valuenow' sea '100'
-            # Le damos más tiempo (ej: 60 seg) porque el reporte puede ser pesado
-            wait_proceso = WebDriverWait(self.driver, 60)
-            
-            wait_proceso.until(lambda d: 
-                barra.get_attribute("aria-valuenow") == "100"
-            )
-            
-            print("✅ Procesamiento al 100%.")
-            
-            # Pequeña pausa de seguridad para que la animación termine y habilite botones
-            time.sleep(1) 
-
-        except Exception as e:
-            # Si entra aquí, puede ser que el reporte fue tan rápido que la barra ni se vio
-            # o que tardó demasiado.
-            print("⚡ El reporte cargó rápido o no se detectó barra de progreso.")
-
-    def _esperar_descarga_archivo(self, timeout=30):
-        """Espera hasta que aparezca un archivo nuevo en la carpeta que no sea .crdownload"""
-        print("Sniffeando carpeta de descargas...")
-        tiempo_inicio = time.time()
-        
-        while time.time() - tiempo_inicio < timeout:
-            archivos = os.listdir(self.download_folder)
-            # Buscamos archivos que NO sean temporales de chrome (.crdownload)
-            archivos_validos = [f for f in archivos if not f.endswith('.crdownload') and f.endswith('.csv')]
-            
-            if archivos_validos:
-                return True
-            time.sleep(1) # Chequear cada segundo
-            
-        print("⚠️ Tiempo de espera de descarga agotado.")
-        return False

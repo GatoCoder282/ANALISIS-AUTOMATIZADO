@@ -162,12 +162,62 @@ if modo_app == "📊 Análisis Individual":
                             st.plotly_chart(fig_base, use_container_width=True)
                         
                         with col_pie:
-                            st.write("### Mix por Canal")
-                            filtro_canal = st.selectbox("Filtrar Top por Canal:", df_p["Tipo Orden"].unique())
+                            st.markdown("### 📊 KPIs por Canal")
+                            
+                            # 1. Selector de Canal
+                            # Usamos df_p para obtener la lista, pero filtraremos sobre el DF maestro
+                            lista_canales = sorted(df_p["Tipo Orden"].unique())
+                            filtro_canal = st.selectbox("Selecciona Canal:", lista_canales)
+                            
+                            # 2. CÁLCULO DE KPIs (Usando analista.df para precisión financiera)
+                            # Filtramos las ventas REALES que coincidan con el canal seleccionado
+                            df_canal_financiero = analista.df[
+                                (analista.df["Tipo de orden"] == filtro_canal) & 
+                                (analista.df["Es_Venta_Real"] == True)
+                            ]
+                            
+                            # Cálculos matemáticos
+                            ventas_c = df_canal_financiero["Monto total"].sum()
+                            tx_c = len(df_canal_financiero) # Cantidad de tickets únicos
+                            ticket_c = ventas_c / tx_c if tx_c > 0 else 0
+                            desc_c = df_canal_financiero["Descuento"].sum()
+                            
+                            st.markdown("---") # Una línea divisoria sutil
+                            
+                            # FILA 1: La métrica principal sola (ocupa todo el ancho de la columna)
+                            st.metric(
+                                label=" Ventas Totales", 
+                                value=f"Bs {ventas_c:,.0f}",
+                                help="Facturación total de este canal"
+                            )
+                            
+                            kc2, kc3 = st.columns(2)
+                            kc2.metric("Ticket Prom.", f"Bs {ticket_c:,.0f}")
+                            kc3.metric("Transacciones", tx_c)
+                            
+                            st.metric(
+                                label=" Descuentos Totales", 
+                                value=f"Bs {desc_c:,.0f}",
+                                help="Facturación total de este canal"
+                            )
+                            
+                            st.divider()
+                            
+                            # 4. Top Productos del Canal (Esto sí viene de df_p)
+                            st.markdown(f"**Top Productos: {filtro_canal}**")
+                            
                             top_f = df_p[df_p["Tipo Orden"]==filtro_canal].groupby("Producto_Base")["Cantidad"].sum().nlargest(10).reset_index()
-                            st.dataframe(top_f, hide_index=True)
-
-                        st.divider()
+                            
+                            # Pequeño ajuste visual a la tabla
+                            st.dataframe(
+                                top_f, 
+                                hide_index=True, 
+                                column_config={
+                                    "Producto_Base": "Producto",
+                                    "Cantidad": st.column_config.NumberColumn("Cant.", format="%d")
+                                },
+                                use_container_width=True
+                            )
                         
                         # --- NIVEL 2: ANÁLISIS DE VARIANTES (DRILL-DOWN) ---
                         c_drill1, c_drill2 = st.columns(2)
