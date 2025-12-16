@@ -8,6 +8,7 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
+import shutil
 
 class RobotMercat:
     DEFAULT_WAIT = 20
@@ -34,7 +35,12 @@ class RobotMercat:
         if headless:
             options.add_argument("--headless=new")
 
-        self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        # Usar chromedriver del sistema si existe (producción), sino webdriver-manager (desarrollo)
+        system_chromedriver = shutil.which('chromedriver')
+        if system_chromedriver:
+            self.driver = webdriver.Chrome(service=Service(system_chromedriver), options=options)
+        else:
+            self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
         self.wait = WebDriverWait(self.driver, self.DEFAULT_WAIT)
 
     def login(self, usuario, password):

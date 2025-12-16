@@ -6,6 +6,10 @@ RUN apt-get update && apt-get install -y \
     chromium \
     chromium-driver \
     fonts-liberation \
+    libglib2.0-0 \
+    libnss3 \
+    libgconf-2-4 \
+    libfontconfig1 \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
