@@ -5,9 +5,7 @@ FROM python:3.11-slim
 RUN apt-get update && apt-get install -y \
     chromium \
     fonts-liberation \
-    libglib2.0-0 \
     libnss3 \
-    libgconf-2-4 \
     libfontconfig1 \
     wget \
     unzip \
