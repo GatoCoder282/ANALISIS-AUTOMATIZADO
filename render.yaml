@@ -1,0 +1,19 @@
+# Render service definition for Streamlit app
+services:
+  - type: web
+    name: cc-dashboard
+    env: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    region: ohio
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: MERCAT_USER
+        sync: false
+      - key: MERCAT_PASS
+        sync: false
+      - key: CHROME_HEADLESS
+        value: "true"
+      - key: STREAMLIT_SERVER_PORT
+        value: "10000"

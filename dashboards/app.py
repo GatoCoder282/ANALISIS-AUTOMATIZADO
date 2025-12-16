@@ -12,8 +12,8 @@ sys.path.append(os.getcwd())
 
 from data.robotMercat import RobotMercat
 from data.config_reportes import REPORTES_CONFIG
-from procesamiento import AnalistaDeDatos
-from analista_operacional import AnalistaOperacional
+from application.procesamiento import AnalistaDeDatos
+from application.analista_operacional import AnalistaOperacional
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Dashboard C&C", layout="wide", page_icon="☕")
@@ -71,7 +71,13 @@ with st.sidebar:
                     if not os.path.exists(folder): os.makedirs(folder)
                     bot = RobotMercat(folder)
                     if limpiar: bot.limpiar_carpeta_descargas()
-                    bot.login("diegomvaldez19@gmail.com", "Gatovaldez8Mercat")
+                    # Credenciales desde variables de entorno
+                    user = os.environ.get("MERCAT_USER")
+                    pwd = os.environ.get("MERCAT_PASS")
+                    if not user or not pwd:
+                        st.error("Faltan variables de entorno MERCAT_USER y MERCAT_PASS.")
+                        st.stop()
+                    bot.login(user, pwd)
                     params = {
                         "fecha_inicio": fini.strftime("%d/%m/%Y"),
                         "fecha_fin": ffin.strftime("%d/%m/%Y"),

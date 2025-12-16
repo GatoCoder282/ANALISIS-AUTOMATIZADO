@@ -29,7 +29,10 @@ class RobotMercat:
         options.add_experimental_option("prefs", prefs)
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        # options.add_argument("--headless=new")  # activar si lo necesitas
+        # Headless configurable por entorno (default: habilitado en servidores)
+        headless = os.environ.get("CHROME_HEADLESS", "true").lower() in ["1", "true", "yes"]
+        if headless:
+            options.add_argument("--headless=new")
 
         self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
         self.wait = WebDriverWait(self.driver, self.DEFAULT_WAIT)
@@ -214,48 +217,44 @@ class RobotMercat:
                 print(f"   ! No se pudo borrar {archivo}: {e}")
         print("✨ Carpeta limpia.")
 
-    def renombrar_ultimo_archivo(self, nuevo_nombre_base):
+    def renombrar_ultimo_archivo(self, nuevo_nombre_final):
         """
-        Renombra el archivo descargado más reciente manteniendo la extensión real.
+        Renombra el archivo descargado más reciente usando exactamente el nombre proporcionado
+        (incluida la extensión) y sobrescribe si ya existe.
         """
         try:
+            # Esperar hasta tener un archivo completo (no .crdownload/.tmp)
             tiempo_espera = 0
             archivo_reciente = None
-
             while tiempo_espera < 15:
                 lista_archivos = glob.glob(os.path.join(self.download_folder, "*"))
                 if not lista_archivos:
                     time.sleep(1); tiempo_espera += 1; continue
-
                 archivo_reciente = max(lista_archivos, key=os.path.getctime)
-
                 if archivo_reciente.endswith(('.crdownload', '.tmp')):
                     time.sleep(1); tiempo_espera += 1
                 else:
                     break
 
             if not archivo_reciente:
+                print("⚠️ No se encontró archivo para renombrar.")
                 return None
 
-            nombre_limpio = "".join(c for c in nuevo_nombre_base if c.isalnum() or c in (' ', '_', '-')).strip()
-            # Detectar extensión real
-            ext = ".csv"
-            if archivo_reciente.lower().endswith(".xlsx"):
-                ext = ".xlsx"
-            nuevo_nombre = f"{nombre_limpio}{ext}"
-            nueva_ruta = os.path.join(self.download_folder, nuevo_nombre)
+            # Usar exactamente el nombre recibido desde la interfaz (debe incluir extensión .csv/.xlsx)
+            destino = os.path.join(self.download_folder, nuevo_nombre_final)
 
-            if os.path.exists(nueva_ruta):
+            # Si existe, reemplazar
+            if os.path.exists(destino):
                 try:
-                    os.remove(nueva_ruta)
+                    os.remove(destino)
                 except Exception as e:
-                    print(f"⚠️ No se pudo sobrescribir {nuevo_nombre}: {e}")
+                    print(f"⚠️ No se pudo sobrescribir {nuevo_nombre_final}: {e}")
                     return None
 
-            time.sleep(0.5)
-            os.rename(archivo_reciente, nueva_ruta)
-            print(f"🏷️ Guardado como: {nuevo_nombre}")
-            return nuevo_nombre
+            time.sleep(0.5)  # evitar locks en Windows
+            os.rename(archivo_reciente, destino)
+            print(f"🏷️ Guardado como: {nuevo_nombre_final}")
+            return nuevo_nombre_final
 
         except Exception as e:
             print(f"⚠️ Error al renombrar: {e}")

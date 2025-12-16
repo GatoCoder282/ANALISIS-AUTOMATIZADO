@@ -1,5 +1,5 @@
 import pandas as pd
-from dashboards.procesamiento import AnalistaDeDatos
+from application.procesamiento import AnalistaDeDatos
 
 def test_es_alquiler_detectado():
     df = pd.DataFrame({"Detalle": ["1x Cuota de membresía por Oficina C&C (algo)"]})
