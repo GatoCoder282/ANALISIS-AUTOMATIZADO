@@ -22,4 +22,4 @@ COPY . .
 # Expose Render's default web service port (can be overridden)
 EXPOSE 10000
 
-CMD ["streamlit", "run", "dashboards/app.py", "--server.port=10000", "--server.headless=true", "--server.enableCORS=true"]
+CMD ["streamlit", "run", "dashboards/app.py", "--server.port=10000", "--server.address=0.0.0.0", "--server.headless=true"]

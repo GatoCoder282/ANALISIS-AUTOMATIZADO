@@ -5,7 +5,7 @@ services:
     env: docker
     plan: free
     dockerfilePath: ./Dockerfile
-    region: ohio
+    region: oregon
     healthCheckPath: /
     autoDeploy: true
     envVars:

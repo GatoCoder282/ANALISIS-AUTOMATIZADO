@@ -60,8 +60,11 @@ with st.sidebar:
             opciones = list(REPORTES_CONFIG.keys())
             tipo = st.selectbox("Reporte", opciones)
             c1, c2 = st.columns(2)
-            fini = c1.date_input("Desde")
-            ffin = c2.date_input("Hasta")
+            from datetime import date, timedelta
+            hoy = date.today()
+            hace_7_dias = hoy - timedelta(days=7)
+            fini = c1.date_input("Desde", value=hace_7_dias)
+            ffin = c2.date_input("Hasta", value=hoy)
             nombre = st.text_input("Nombre:", value=f"{tipo}_{fini.strftime('%d%m')}")
             limpiar = st.checkbox("Borrar previos", value=False)
             
