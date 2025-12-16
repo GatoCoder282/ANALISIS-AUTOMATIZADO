@@ -1,26 +1,18 @@
 # Render deployment Dockerfile for Streamlit + Selenium
 FROM python:3.11-slim
 
-# Install dependencies and Chromium
+# Install Chrome stable instead of Chromium for better compatibility
 RUN apt-get update && apt-get install -y \
-    chromium \
-    fonts-liberation \
-    libnss3 \
-    libfontconfig1 \
     wget \
     unzip \
+    gnupg \
+    && wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - \
+    && echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google-chrome.list \
+    && apt-get update \
+    && apt-get install -y google-chrome-stable \
     && rm -rf /var/lib/apt/lists/*
 
-# Download compatible ChromeDriver for Chromium 143
-RUN CHROMEDRIVER_VERSION=143.0.6998.0 && \
-    wget -q "https://storage.googleapis.com/chrome-for-testing-public/${CHROMEDRIVER_VERSION}/linux64/chromedriver-linux64.zip" -O /tmp/chromedriver.zip && \
-    unzip /tmp/chromedriver.zip -d /tmp/ && \
-    mv /tmp/chromedriver-linux64/chromedriver /usr/local/bin/chromedriver && \
-    chmod +x /usr/local/bin/chromedriver && \
-    rm -rf /tmp/chromedriver.zip /tmp/chromedriver-linux64
-
-ENV CHROME_BIN=/usr/bin/chromium \
-    CHROMEDRIVER_PATH=/usr/local/bin/chromedriver \
+ENV CHROME_BIN=/usr/bin/google-chrome \
     CHROME_HEADLESS=true \
     STREAMLIT_SERVER_PORT=10000
 
