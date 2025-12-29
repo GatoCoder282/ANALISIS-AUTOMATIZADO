@@ -10,6 +10,10 @@ import sys
 # Aseguramos que python encuentre los archivos
 sys.path.append(os.getcwd()) 
 
+# Cargar variables desde .env (MERCAT_USER, MERCAT_PASS, CHROME_HEADLESS, etc.)
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+
 from data.robotMercat import RobotMercat
 from data.config_reportes import REPORTES_CONFIG
 from application.procesamiento import AnalistaDeDatos

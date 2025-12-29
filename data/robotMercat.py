@@ -225,8 +225,8 @@ class RobotMercat:
 
     def renombrar_ultimo_archivo(self, nuevo_nombre_final):
         """
-        Renombra el archivo descargado más reciente usando exactamente el nombre proporcionado
-        (incluida la extensión) y sobrescribe si ya existe.
+        Renombra el archivo descargado más reciente usando exactamente el nombre proporcionado.
+        Si ya existe un archivo con ese nombre, agrega un número secuencial (1), (2), etc.
         """
         try:
             # Esperar hasta tener un archivo completo (no .crdownload/.tmp)
@@ -249,18 +249,27 @@ class RobotMercat:
             # Usar exactamente el nombre recibido desde la interfaz (debe incluir extensión .csv/.xlsx)
             destino = os.path.join(self.download_folder, nuevo_nombre_final)
 
-            # Si existe, reemplazar
+            # Si existe, agregar número secuencial
             if os.path.exists(destino):
-                try:
-                    os.remove(destino)
-                except Exception as e:
-                    print(f"⚠️ No se pudo sobrescribir {nuevo_nombre_final}: {e}")
-                    return None
+                # Separar nombre base y extensión
+                nombre_base, extension = os.path.splitext(nuevo_nombre_final)
+                contador = 1
+                
+                # Buscar un nombre disponible
+                while os.path.exists(destino):
+                    nuevo_nombre_con_numero = f"{nombre_base} ({contador}){extension}"
+                    destino = os.path.join(self.download_folder, nuevo_nombre_con_numero)
+                    contador += 1
+                
+                nombre_final_usado = os.path.basename(destino)
+                print(f"⚠️ Archivo ya existe. Renombrando a: {nombre_final_usado}")
+            else:
+                nombre_final_usado = nuevo_nombre_final
 
             time.sleep(0.5)  # evitar locks en Windows
             os.rename(archivo_reciente, destino)
-            print(f"🏷️ Guardado como: {nuevo_nombre_final}")
-            return nuevo_nombre_final
+            print(f"🏷️ Guardado como: {nombre_final_usado}")
+            return nombre_final_usado
 
         except Exception as e:
             print(f"⚠️ Error al renombrar: {e}")

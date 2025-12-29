@@ -2,9 +2,12 @@ import os
 from robotMercat import RobotMercat
 from config_reportes import REPORTES_CONFIG
 
-# CREDENCIALES (Mejor usar variables de entorno, pero para probar úsalas aquí)
-USUARIO = "diegomvaldez19@gmail.com"
-PASSWORD = "Gatovaldez8Mercat"
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+
+# Credenciales desde .env (MERCAT_USER, MERCAT_PASS)
+USUARIO = os.environ.get("MERCAT_USER")
+PASSWORD = os.environ.get("MERCAT_PASS")
 
 def probar_descarga():
     # Carpeta donde se guardarán los archivos
@@ -18,6 +21,8 @@ def probar_descarga():
     bot.limpiar_carpeta_descargas()
 
     # 1. Login
+    if not USUARIO or not PASSWORD:
+        raise RuntimeError("Faltan MERCAT_USER o MERCAT_PASS en .env")
     bot.login(USUARIO, PASSWORD)
     
     # 2. Definir qué queremos descargar
