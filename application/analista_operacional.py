@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import re
 
 class AnalistaOperacional:
     def __init__(self, df_ventas=None, df_indice=None):
@@ -151,12 +152,18 @@ class AnalistaOperacional:
         Analiza ocupación de mesas basada en CONTEO de visitas.
         Filtra solo lo anulado (operativamente no cuenta), pero incluye todo lo demás.
         """
+        print("\n=== INICIO heatmap_mesas ===")
         df = self.df_maestro.copy()
-        if "Mesa_Real" not in df.columns: return None
+        print(f"Maestro shape: {df.shape}")
+        print(f"Columnas disponibles: {df.columns.tolist()}")
+        
+        if "Mesa_Real" not in df.columns:
+            print("ERROR: Mesa_Real no existe en columnas!")
+            return None
 
         # 1. Limpieza de datos nulos o genéricos
-        # Eliminamos filas donde no hay mesa asignada
         df_mesas = df.dropna(subset=["Mesa_Real"])
+        print(f"Después de dropna Mesa_Real: {len(df_mesas)} filas")
         
         # 2. Filtro Operativo
         # Queremos contar "veces que consumieron", por lo tanto excluimos solo los ANULADOS.
@@ -165,12 +172,112 @@ class AnalistaOperacional:
             # Normalizar a string para comparar seguro
             df_mesas = df_mesas[~df_mesas["anulado"].astype(str).str.lower().isin(["sí", "si", "true", "yes"])]
 
+        def normalizar_mesa(nombre):
+            if pd.isna(nombre):
+                return None
+            raw = str(nombre).strip().upper()
+            if not raw:
+                return None
+
+            # Quitar acentos simples para que CUBÍCULO, BALCÓN, SALÓN se reconozcan
+            tabla = str.maketrans("ÁÉÍÓÚÜÑ", "AEIOUUN")
+            mesa = raw.translate(tabla)
+
+            # Entregas / delivery: descartar antes de procesar
+            if "YANGO" in mesa or "DELIVERY" in mesa:
+                return None
+
+            # Salón: "Sala S#" o "Salon #"
+            m = re.search(r"SALA\s+S\s*(\d+)", mesa)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 6:
+                    return f"S{num}"
+            m = re.search(r"SALON\s+S?\s*(\d+)", mesa)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 6:
+                    return f"S{num}"
+            # Alias solo S# sin palabra SALA
+            m = re.search(r"\bS\s*(\d+)", mesa)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 6:
+                    return f"S{num}"
+
+            # Balcón: "Balcon B#"
+            m = re.search(r"BALCON\s+B\s*(\d+)", mesa)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 5:
+                    return f"B{num}"
+            # Alias solo B#
+            m = re.search(r"\bB\s*(\d+)", mesa)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 5:
+                    return f"B{num}"
+
+            # Cubículos: "Cubiculo C#"
+            m = re.search(r"CUBICUL\w*\s+C\s*(\d+)", mesa)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 6:  # Extendido a C6 por el CSV
+                    return f"C{num}"
+            # Alias solo C#
+            m = re.search(r"\bC\s*(\d+)", mesa)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 6:
+                    return f"C{num}"
+
+            # Barra: "Barra P#"
+            m = re.search(r"BARRA\s+P\s*(\d+)", mesa)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 2:
+                    return f"P{num}"
+            # Alias solo P#
+            m = re.search(r"\bP\s*(\d+)", mesa)
+            if m:
+                num = int(m.group(1))
+                if 1 <= num <= 2:
+                    return f"P{num}"
+
+            # SALA sin número específico (ej. "Sala 1", nombres de personas, etc.)
+            if "SALA" in mesa:
+                return "SALA"
+
+            # Fallback: nombres de personas, cuentas, etc. → SALA
+            return "SALA"
+
+        df_mesas = df_mesas.copy()
+        df_mesas["Mesa_Normalizada"] = df_mesas["Mesa_Real"].apply(normalizar_mesa)
+        
+        # DEBUG: mostrar ejemplos de normalización
+        print("\n=== DEBUG Normalización Mesas ===")
+        print(f"Total mesas antes de normalizar: {len(df_mesas)}")
+        ejemplos = df_mesas[["Mesa_Real", "Mesa_Normalizada"]].drop_duplicates().head(20)
+        print(ejemplos.to_string())
+        print("================================\n")
+        
+        df_mesas = df_mesas.dropna(subset=["Mesa_Normalizada"])
+        print(f"Mesas después de filtrar None: {len(df_mesas)}")
+
+        if df_mesas.empty:
+            print("WARNING: No hay mesas después de normalizar!")
+            return None
+
         # 3. Agrupación
-        stats = df_mesas.groupby("Mesa_Real").agg(
+        stats = df_mesas.groupby("Mesa_Normalizada").agg(
             Ocupaciones=('ticket_id', 'nunique'),      # Conteo de visitas únicas
             Facturacion_Total=('monto', 'sum'),        # Total dinero
             Ticket_Promedio=('monto', 'mean')          # Promedio por visita
         ).reset_index()
+        stats = stats.rename(columns={"Mesa_Normalizada": "Mesa_Real"})
+
+        print(f"Stats finales: {len(stats)} mesas agrupadas")
+        print(stats.to_string())
         
         # Ordenar por Ocupación (lo más importante ahora)
         return stats.sort_values("Ocupaciones", ascending=False)
