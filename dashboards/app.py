@@ -44,6 +44,132 @@ def cargar_df(nombre_archivo):
         st.error(f"Error leyendo {nombre_archivo}: {e}")
         return None
 
+def obtener_coordenadas_mesas():
+    """
+    Retorna un diccionario con las coordenadas X,Y de cada mesa según el plano del restaurante.
+    Coordenadas normalizadas (0-100) para facilitar el escalado.
+    """
+    return {
+        # Fila superior (barra y mesas altas S1, S2, S3)
+        "S1": (25, 90),
+        "S2": (40, 90),
+        "S3": (55, 90),
+        
+        # Mesas laterales derechas (C1-C6)
+        "C1": (85, 85),
+        "C2": (85, 78),
+        "C3": (85, 71),
+        "C4": (85, 64),
+        "C5": (85, 57),
+        "C6": (85, 50),
+        
+        # Mesa central (S4)
+        "S4": (50, 70),
+        
+        # Mesas izquierda alta (S5 y otra)
+        "S5": (35, 55),
+        "S8": (50, 55),
+        
+        # Área central-baja
+        "4": (45, 35),
+        "3": (60, 35),
+        "2": (70, 35),
+        "1": (80, 35),
+        
+        # Mesas inferiores
+        "B1": (25, 20),
+        "B2": (25, 12),
+        "B3": (25, 5),
+    }
+
+def renderizar_mapa_mesas(df_mesas):
+    """
+    Crea una visualización 2D del restaurante con las mesas posicionadas según el plano físico.
+    
+    Args:
+        df_mesas: DataFrame con columnas Mesa_Real, Ocupaciones, Ticket_Promedio, Facturacion_Total
+    
+    Returns:
+        Plotly figure
+    """
+    if df_mesas is None or df_mesas.empty:
+        return None
+    
+    coords = obtener_coordenadas_mesas()
+    
+    # Agregar coordenadas al dataframe
+    df_plot = df_mesas.copy()
+    df_plot["X"] = df_plot["Mesa_Real"].map(lambda m: coords.get(str(m), (50, 50))[0])
+    df_plot["Y"] = df_plot["Mesa_Real"].map(lambda m: coords.get(str(m), (50, 50))[1])
+    
+    # Mesas no mapeadas (usar posiciones aleatorias en zona inferior)
+    import numpy as np
+    sin_coords = df_plot[(df_plot["X"] == 50) & (df_plot["Y"] == 50)]
+    if not sin_coords.empty:
+        np.random.seed(42)
+        for idx in sin_coords.index:
+            df_plot.at[idx, "X"] = np.random.uniform(10, 90)
+            df_plot.at[idx, "Y"] = np.random.uniform(5, 25)
+    
+    # Crear figura con scatter
+    fig = go.Figure()
+    
+    # Normalizar tamaños para mejor visualización
+    size_scale = 100 / df_plot["Ocupaciones"].max() if df_plot["Ocupaciones"].max() > 0 else 1
+    
+    fig.add_trace(go.Scatter(
+        x=df_plot["X"],
+        y=df_plot["Y"],
+        mode="markers+text",
+        marker=dict(
+            size=df_plot["Ocupaciones"] * size_scale * 0.8,  # Tamaño proporcional a ocupación
+            color=df_plot["Ticket_Promedio"],  # Color por ticket promedio
+            colorscale="RdYlGn",  # Rojo (bajo) -> Amarillo -> Verde (alto)
+            showscale=True,
+            colorbar=dict(title="Ticket Bs"),
+            line=dict(width=2, color="white"),
+            sizemode="diameter"
+        ),
+        text=df_plot["Mesa_Real"],
+        textposition="middle center",
+        textfont=dict(size=10, color="white", family="Arial Black"),
+        hovertemplate="<b>Mesa %{text}</b><br>" +
+                      "Ocupaciones: %{customdata[0]}<br>" +
+                      "Ticket Prom: Bs %{customdata[1]:,.0f}<br>" +
+                      "Total: Bs %{customdata[2]:,.0f}<br>" +
+                      "<extra></extra>",
+        customdata=df_plot[["Ocupaciones", "Ticket_Promedio", "Facturacion_Total"]].values
+    ))
+    
+    # Layout que simula el plano del restaurante
+    fig.update_layout(
+        title="Mapa de Ocupación del Restaurante",
+        xaxis=dict(
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False,
+            range=[-5, 105]
+        ),
+        yaxis=dict(
+            showgrid=False,
+            zeroline=False,
+            showticklabels=False,
+            range=[-5, 105],
+            scaleanchor="x",
+            scaleratio=1
+        ),
+        plot_bgcolor="rgb(240, 240, 240)",
+        height=600,
+        showlegend=False
+    )
+    
+    # Agregar áreas del restaurante (opcional, para contexto)
+    fig.add_shape(type="rect", x0=0, y0=80, x1=70, y1=100, 
+                  fillcolor="rgba(200, 200, 200, 0.2)", line=dict(width=0),
+                  layer="below", name="Barra")
+    
+    return fig
+
 # ==============================================================================
 #                                   SIDEBAR
 # ==============================================================================
@@ -130,260 +256,222 @@ if modo_app == "📊 Análisis Individual":
             #                     REPORTE VENTAS
             # -------------------------------------------------------
             if tipo == "VENTAS":
-                # KPIs Header
-                kpis = analista.get_kpis_financieros() # Esto ya NO incluye Yango
-                monto_alquiler = analista.get_kpi_alquileres() # Esto ES solo Yango
+                # KPIs globales
+                kpis = analista.get_kpis_financieros()
+                monto_alquiler = analista.get_kpi_alquileres()
                 c1, c2, c3, c4 = st.columns(4)
-
                 c1.metric("Ventas Operativas", f"Bs {kpis.get('Ventas Totales',0):,.0f}", help="Venta de productos (Sin alquileres)")
                 c2.metric("Ticket Promedio", f"Bs {kpis.get('Ticket Promedio',0):,.0f}")
                 c3.metric("Transacciones", kpis.get('Transacciones',0))
                 c4.metric("Descuentos", f"Bs {kpis.get('Total Descuentos',0):,.0f}")
 
                 c5, c6, c7, c8 = st.columns(4)
-
                 c5.metric("Pendientes", f"Bs {kpis['Ventas Pendientes']:,.0f}")
                 c6.metric("Consumo Interno", f"Bs {kpis['Consumo Interno']:,.0f}")
                 c7.metric("Ingreso Yango (Alquiler)", f"Bs {monto_alquiler:,.0f}", delta_color="off", help="Membresías e Insumos facturados aparte")
                 c8.metric("Cobranza (%)", f"{kpis['Ratio Pagado']*100:,.1f}%")
 
                 st.divider()
-                # Pestañas con TODAS las funciones implementadas
-                pestanas = st.tabs([
-                    "🍩 Productos", 
-                    "🧠 Estrategia (BCG/Pareto)", 
-                    "🛒 Combos (Basket)", 
-                    "👥 Clientes (Recurrencia)", 
-                    "⚠️ Auditoría",
-                    "⏰ Tiempos", 
-                    "💳 Pagos"
-                ])
-                
-                with pestanas[0]: # Pestaña Productos
-                    df_p = analista.analizar_productos()
-                    
-                    if df_p is not None:
-                        st.subheader("🏆 Top Productos (Agrupados)")
-                        
-                        col_top, col_pie = st.columns([2, 1])
-                        
-                        with col_top:
-                            # Agrupamos por Producto BASE (ignorando si es con leche light o normal)
-                            top_base = df_p.groupby("Producto_Base")["Cantidad"].sum().nlargest(15).reset_index()
-                            fig_base = px.bar(top_base, x="Cantidad", y="Producto_Base", orientation='h', 
-                                            text_auto=True, title="Lo más vendido (Sin variantes)", color="Cantidad")
-                            st.plotly_chart(fig_base, use_container_width=True)
-                        
-                        with col_pie:
-                            st.markdown("### 📊 KPIs por Canal")
-                            
-                            # 1. Selector de Canal
-                            # Usamos df_p para obtener la lista, pero filtraremos sobre el DF maestro
-                            lista_canales = sorted(df_p["Tipo Orden"].unique())
-                            filtro_canal = st.selectbox("Selecciona Canal:", lista_canales)
-                            
-                            # 2. CÁLCULO DE KPIs (Usando analista.df para precisión financiera)
-                            # Filtramos las ventas REALES que coincidan con el canal seleccionado
-                            df_canal_financiero = analista.df[
-                                (analista.df["Tipo de orden"] == filtro_canal) & 
-                                (analista.df["Es_Venta_Real"] == True)
-                            ]
-                            
-                            # Cálculos matemáticos
-                            ventas_c = df_canal_financiero["Monto total"].sum()
-                            tx_c = len(df_canal_financiero) # Cantidad de tickets únicos
-                            ticket_c = ventas_c / tx_c if tx_c > 0 else 0
-                            desc_c = df_canal_financiero["Descuento"].sum()
-                            
-                            st.markdown("---") # Una línea divisoria sutil
-                            
-                            # FILA 1: La métrica principal sola (ocupa todo el ancho de la columna)
-                            st.metric(
-                                label=" Ventas Totales", 
-                                value=f"Bs {ventas_c:,.0f}",
-                                help="Facturación total de este canal"
-                            )
-                            
-                            kc2, kc3 = st.columns(2)
-                            kc2.metric("Ticket Prom.", f"Bs {ticket_c:,.0f}")
-                            kc3.metric("Transacciones", tx_c)
-                            
-                            st.metric(
-                                label=" Descuentos Totales", 
-                                value=f"Bs {desc_c:,.0f}",
-                                help="Facturación total de este canal"
-                            )
-                            
-                            st.divider()
-                            
-                            # 4. Top Productos del Canal (Esto sí viene de df_p)
-                            st.markdown(f"**Top Productos: {filtro_canal}**")
-                            
-                            top_f = df_p[df_p["Tipo Orden"]==filtro_canal].groupby("Producto_Base")["Cantidad"].sum().nlargest(10).reset_index()
-                            
-                            # Pequeño ajuste visual a la tabla
-                            st.dataframe(
-                                top_f, 
-                                hide_index=True, 
-                                column_config={
-                                    "Producto_Base": "Producto",
-                                    "Cantidad": st.column_config.NumberColumn("Cant.", format="%d")
-                                },
-                                use_container_width=True
-                            )
-                        
-                        # --- NIVEL 2: ANÁLISIS DE VARIANTES (DRILL-DOWN) ---
-                        c_drill1, c_drill2 = st.columns(2)
-                        
-                        with c_drill1:
-                            st.subheader("🔍 Analizar Variantes de un Producto")
-                            # Selectbox con los productos base ordenados alfabéticamente
-                            lista_productos = sorted(df_p["Producto_Base"].unique())
-                            producto_elegido = st.selectbox("Selecciona un producto para ver sus sabores/detalles:", lista_productos, index=0)
-                            
-                            # Filtramos data
-                            df_filtrado = df_p[df_p["Producto_Base"] == producto_elegido]
-                            # Contamos variantes
-                            vars_count = df_filtrado.groupby("Variante")["Cantidad"].sum().reset_index()
-                            
-                            if not vars_count.empty:
-                                fig_var = px.pie(vars_count, values="Cantidad", names="Variante", 
-                                               title=f"Desglose de: {producto_elegido}", hole=0.4)
-                                st.plotly_chart(fig_var, use_container_width=True)
-                            else:
-                                st.info("Este producto no tiene variantes registradas.")
 
-                        # --- NIVEL 3: VARIANTES GLOBALES (TRANSVERSAL) ---
-                        with c_drill2:
-                            st.subheader("📊 Modificadores más comunes (Global)")
-                            # Excluimos "Original/Sin Cambios" para ver solo las modificaciones reales
-                            df_vars_real = df_p[df_p["Variante"] != "Original/Sin Cambios"]
-                            
-                            if not df_vars_real.empty:
-                                top_vars = df_vars_real.groupby("Variante")["Cantidad"].sum().nlargest(10).reset_index()
-                                fig_global_vars = px.bar(top_vars, x="Cantidad", y="Variante", 
-                                                       title="Top Agregados/Cambios en todo el menú", color_discrete_sequence=["#FF6692"])
-                                st.plotly_chart(fig_global_vars, use_container_width=True)
-                            else:
-                                st.info("No hay suficientes datos de variantes específicas.")
+                # Precomputos y helpers para las nuevas vistas por canal
+                df_productos = analista.analizar_productos()
+                df_global_valid = analista._excluir_alquiler(analista.df.copy())
+                if "Es_Valido" in df_global_valid.columns:
+                    df_global_valid = df_global_valid[df_global_valid["Es_Valido"] == True]
+                total_ventas_validas = df_global_valid["Monto total"].sum()
 
+                CANAL_ALIASES = {
+                    "Mesa y Recojo": ["MESA", "RECOJO", "RETIRO", "PICKUP", "PARA LLEVAR"],
+                    "Interno": ["INTERNO"],
+                    "PedidosYa": ["PEDIDOSYA", "PEDIDOS YA", "PEDIDOS-YA"],
+                    "Yango": ["YANGO"]
+                }
+
+                def filtrar_por_canal(df_base, alias_list, incluir_alquiler=False):
+                    df_tmp = df_base.copy()
+                    if not incluir_alquiler:
+                        df_tmp = analista._excluir_alquiler(df_tmp)
+                    if "Es_Valido" in df_tmp.columns:
+                        df_tmp = df_tmp[df_tmp["Es_Valido"] == True]
+                    if "Tipo_Norm" in df_tmp.columns:
+                        tipos = df_tmp["Tipo_Norm"].fillna("").str.upper()
                     else:
-                        st.warning("No se pudieron procesar los productos. Verifica la columna 'Detalle'.")
-                
-                # 2. Estrategia (BCG y Pareto)
+                        tipos = df_tmp["Tipo de orden"].fillna("").str.upper()
+                    mask = tipos.apply(lambda t: any(alias in t for alias in alias_list))
+                    return df_tmp[mask]
+
+                def filtrar_productos_por_canal(df_prod, alias_list):
+                    if df_prod is None or df_prod.empty:
+                        return pd.DataFrame()
+                    tipos = df_prod["Tipo Orden"].fillna("").str.upper()
+                    mask = tipos.apply(lambda t: any(alias in t for alias in alias_list))
+                    return df_prod[mask]
+
+                def render_tab_canal(nombre, alias_list, incluir_alquiler=False, permitir_internos=False):
+                    df_canal = filtrar_por_canal(analista.df, alias_list, incluir_alquiler=incluir_alquiler)
+                    df_prod_canal = filtrar_productos_por_canal(df_productos, alias_list)
+
+                    # Los internos vienen marcados como no venta real; para mostrar sus KPIs los habilitamos
+                    if permitir_internos and not df_canal.empty:
+                        df_canal = df_canal.copy()
+                        df_canal["Es_Venta_Real"] = df_canal["Es_Valido"]
+
+                    if df_canal.empty:
+                        st.info("No hay datos válidos para este canal.")
+                        return
+
+                    kpi_canal = AnalistaDeDatos(df_canal, "VENTAS").get_kpis_financieros()
+                    share = (kpi_canal.get("Ventas Totales", 0) / total_ventas_validas) if total_ventas_validas else 0
+
+                    k1, k2, k3, k4, k5 = st.columns(5)
+                    k1.metric("Ventas Totales", f"Bs {kpi_canal.get('Ventas Totales',0):,.0f}", f"{share*100:,.1f}% del total")
+                    k2.metric("Ticket Promedio", f"Bs {kpi_canal.get('Ticket Promedio',0):,.0f}")
+                    k3.metric("Transacciones", kpi_canal.get('Transacciones',0))
+                    k4.metric("Descuentos", f"Bs {kpi_canal.get('Total Descuentos',0):,.0f}")
+                    k5.metric("Pendientes", f"Bs {kpi_canal.get('Ventas Pendientes',0):,.0f}")
+
+                    st.markdown("### Top 15 productos más vendidos")
+                    if not df_prod_canal.empty:
+                        top_base = df_prod_canal.groupby("Producto_Base")["Cantidad"].sum().nlargest(15).reset_index()
+                        fig_top = px.bar(top_base, x="Cantidad", y="Producto_Base", orientation="h", text_auto=True, color="Cantidad")
+                        st.plotly_chart(fig_top, use_container_width=True)
+                    else:
+                        st.info("Sin productos detallados para este canal.")
+
+                    st.markdown("### Variantes y modificadores")
+                    if not df_prod_canal.empty:
+                        c_var, c_mod = st.columns(2)
+
+                        with c_var:
+                            productos_disponibles = sorted(df_prod_canal["Producto_Base"].unique())
+                            prod_sel = st.selectbox("Producto", productos_disponibles, key=f"prod_{nombre}")
+                            df_sel = df_prod_canal[df_prod_canal["Producto_Base"] == prod_sel]
+                            total_prod = df_sel["Cantidad"].sum()
+                            variantes = df_sel.groupby("Variante")["Cantidad"].sum().reset_index()
+                            variantes["Porcentaje"] = variantes["Cantidad"] / total_prod * 100 if total_prod else 0
+                            if not variantes.empty:
+                                fig_var = px.pie(variantes, values="Cantidad", names="Variante", title=f"Variantes de {prod_sel}", hole=0.45)
+                                st.plotly_chart(fig_var, use_container_width=True)
+                                st.dataframe(variantes, hide_index=True, use_container_width=True)
+                            else:
+                                st.info("Sin variantes registradas para este producto.")
+
+                        with c_mod:
+                            mods = df_prod_canal[df_prod_canal["Variante"] != "Original/Sin Cambios"]
+                            if not mods.empty:
+                                top_mods = mods.groupby("Variante")["Cantidad"].sum().nlargest(10).reset_index()
+                                fig_mod = px.bar(top_mods, x="Cantidad", y="Variante", title="Modificadores más comunes", color_discrete_sequence=["#FF6692"])
+                                st.plotly_chart(fig_mod, use_container_width=True)
+                            else:
+                                st.info("No hay modificadores distintos al original.")
+                    else:
+                        st.info("Sin detalle de productos para analizar variantes.")
+
+                    st.markdown("### Productos comprados juntos")
+                    if not df_prod_canal.empty:
+                        pedidos = df_prod_canal.groupby("Id_Venta")["Producto_Base"].apply(lambda s: tuple(sorted(set([p for p in s.dropna()]))))
+                        pedidos = pedidos[pedidos.apply(len) > 1]
+                        combos = pedidos.value_counts().head(5).reset_index()
+                        combos.columns = ["Pedido", "Veces"]
+                        combos["Pedido"] = combos["Pedido"].apply(lambda t: " + ".join(t))
+                        if not combos.empty:
+                            st.write("Top 5 pedidos completos:")
+                            st.dataframe(combos, hide_index=True, use_container_width=True)
+                        else:
+                            st.info("No hay pedidos con múltiples productos en este canal.")
+                    else:
+                        st.info("Sin detalle de productos para analizar combos.")
+
+                    reglas = AnalistaDeDatos(df_canal, "VENTAS").basket_analysis(top_n=10, min_support=2)
+                    if reglas is not None:
+                        reglas["Pareja"] = reglas.apply(lambda r: f"{str(r['item_a']).title()} + {str(r['item_b']).title()}", axis=1)
+                        st.write("Top 10 parejas de productos más solicitados")
+                        st.dataframe(reglas[["Pareja", "count", "support", "conf_a->b", "conf_b->a"]], hide_index=True, use_container_width=True)
+                    else:
+                        st.info("No se identificaron parejas frecuentes en este canal.")
+
+                    st.markdown("### Frecuencia de pedidos")
+                    c_h, c_d = st.columns(2)
+                    if "Hora_Num" in df_canal.columns:
+                        horas = df_canal.groupby("Hora_Num")["Id"].nunique().reset_index().rename(columns={"Id": "Pedidos"})
+                        c_h.plotly_chart(px.bar(horas, x="Hora_Num", y="Pedidos", title="Cantidad de pedidos por hora"), use_container_width=True)
+                    else:
+                        c_h.info("No hay información horaria disponible.")
+
+                    if "Dia_Semana" in df_canal.columns:
+                        orden_dias = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                        dias = df_canal.groupby("Dia_Semana")["Id"].nunique().reindex(orden_dias).dropna().reset_index().rename(columns={"Id": "Pedidos"})
+                        c_d.plotly_chart(px.bar(dias, x="Dia_Semana", y="Pedidos", title="Cantidad de pedidos por día"), use_container_width=True)
+                    else:
+                        c_d.info("No hay información de día disponible.")
+
+                pestanas = st.tabs([
+                    "🪑 Mesa y Recojo",
+                    "🏢 Interno",
+                    "🛵 PedidosYa",
+                    "🚚 Yango",
+                    "💳 Pagos",
+                    "🧑‍🍳 Meseros"
+                ])
+
+                with pestanas[0]:
+                    render_tab_canal("Mesa y Recojo", CANAL_ALIASES["Mesa y Recojo"])
+
                 with pestanas[1]:
-                    c_bcg, c_par = st.columns(2)
-                    with c_bcg:
-                        st.subheader("Matriz BCG (Crecimiento vs Ventas)")
-                        df_bcg = analista.bcg_matrix()
-                        if df_bcg is not None:
-                            fig_bcg = px.scatter(df_bcg, x="revenue_total", y="growth", color="category", hover_name="producto", size="revenue_total")
-                            st.plotly_chart(fig_bcg, use_container_width=True)
-                            with st.expander("Ver datos BCG"): st.dataframe(df_bcg)
-                        else: st.info("No hay suficientes datos históricos para BCG.")
-                    
-                    with c_par:
-                        st.subheader("Productos VIP (Ley de Pareto)")
-                        df_vip = analista.vip_products()
-                        if df_vip is not None:
-                            vips = df_vip[df_vip["VIP"]==True]
-                            st.metric("Cantidad Productos VIP", len(vips))
-                            st.write(f"Estos {len(vips)} productos hacen el 20% de tu venta.")
-                            st.dataframe(vips[["share", "cumsum"]].head(len(vips)+5))
+                    render_tab_canal("Interno", CANAL_ALIASES["Interno"], permitir_internos=True)
 
-                # 3. Market Basket
                 with pestanas[2]:
-                    st.subheader("Análisis de Canasta (Productos comprados juntos)")
-                    mb = analista.market_basket_rules()
-                    if mb is not None:
-                        st.dataframe(mb, use_container_width=True)
-                    else: st.info("No se encontraron patrones fuertes de combinación.")
+                    render_tab_canal("PedidosYa", CANAL_ALIASES["PedidosYa"])
 
-                # 4. Clientes y Recurrencia
                 with pestanas[3]:
-                    rec = analista.recurrence_analysis()
-                    if rec:
-                        cc1, cc2, cc3 = st.columns(3)
-                        cc1.metric("Clientes Recurrentes", rec.get('recurrent_clients',0))
-                        if rec.get('mean_days_between'):
-                            cc2.metric("Frecuencia de Visita", f"Cada {rec['mean_days_between']:.1f} días")
-                        cc3.metric("Ticket Recurrente vs Nuevo", f"{rec.get('ticket_prom_freq',0):.1f} vs {rec.get('ticket_prom_new',0):.1f}")
-                        
-                        st.subheader("Top Clientes Ballena")
-                        ballenas = analista.clientes_ballena()
-                        if ballenas is not None: st.dataframe(ballenas)
+                    render_tab_canal("Yango", CANAL_ALIASES["Yango"], incluir_alquiler=True)
 
-                # 5. Auditoría y Problemas
                 with pestanas[4]:
-                    col_prob, col_anul = st.columns(2)
-                    with col_prob:
-                        st.subheader("Productos Problemáticos")
-                        probs = analista.productos_problematicos()
-                        if probs:
-                            st.write("**Más Anulados:**")
-                            st.dataframe(probs["anulaciones"].head(5))
-                            st.write("**Más Descontados:**")
-                            st.dataframe(probs["descuentos"].head(5))
-                    
-                    with col_anul:
-                        st.subheader("Control de Caja")
-                        ctrl = analista.control_anulados_y_pendientes()
-                        if ctrl:
-                            st.metric("Total Anulado", f"Bs {ctrl['anulados_monto']:,.2f}")
-                            st.metric("Pendiente de Pago", f"Bs {ctrl['pendientes_monto']:,.2f}")
-                            if ctrl['pendientes_por_cliente'] is not None:
-                                st.write("Deudores:")
-                                st.dataframe(ctrl['pendientes_por_cliente'])
-
-                # 6. Tiempos (Ventas por hora)
-                with pestanas[5]:
-                    c_t1, c_t2 = st.columns(2)
-                    df_h = analista.ventas_por_tiempo("H")
-                    if not df_h.empty:
-                        c_t1.subheader("Mapa de Calor Horario")
-                        c_t1.plotly_chart(px.bar(df_h, x=df_h.columns[0], y="Monto total"), use_container_width=True)
-                    
-                    heat = analista.weekly_heatmap()
-                    if heat is not None:
-                        c_t2.subheader("Intensidad Semanal")
-                        c_t2.plotly_chart(px.imshow(heat.T, aspect="auto"), use_container_width=True)
-
-                # 7. Pagos
-                with pestanas[6]:
                     analisis_pagos = analista.analisis_pagos_avanzado()
-                
+
                     if analisis_pagos:
-                        # 1. Gráficos Generales
                         c_p1, c_p2 = st.columns(2)
-                        
+
                         with c_p1:
                             st.subheader("Distribución por Cantidad de Ventas")
-                            # Gráfico de Torta basado en Transacciones (No en monto)
                             fig_p = px.pie(analisis_pagos["general"], names="Métodos de pago", values="Transacciones", hole=0.4)
                             st.plotly_chart(fig_p, use_container_width=True)
-                            
+
                         with c_p2:
                             st.subheader("Ticket Promedio por Método")
-                            # Gráfico de Barras para ver quién gasta más
                             fig_tp = px.bar(analisis_pagos["general"], x="Métodos de pago", y="Ticket_Promedio", 
                                             color="Ticket_Promedio", title="¿Quién gasta más?")
                             st.plotly_chart(fig_tp, use_container_width=True)
 
-                        # 2. Desglose por Tipo de Orden
                         if analisis_pagos["por_tipo_orden"] is not None:
                             st.subheader("Métodos de Pago por Canal (Tipo de Orden)")
-                            # Convertimos la matriz a formato largo para graficar fácil
                             df_melt = analisis_pagos["por_tipo_orden"].melt(id_vars="Métodos de pago", var_name="Canal", value_name="Transacciones")
-                            
                             fig_stack = px.bar(df_melt, x="Canal", y="Transacciones", color="Métodos de pago", 
                                             title="Preferencia de Pago según Canal", barmode="stack")
                             st.plotly_chart(fig_stack, use_container_width=True)
-                        
-                        # Tabla detalle
+
                         with st.expander("Ver Tabla Financiera Detallada"):
                             st.dataframe(analisis_pagos["general"].style.format({"Venta_Total": "Bs {:,.2f}", "Ticket_Promedio": "Bs {:,.2f}"}))
                     else:
                         st.info("No se encontraron datos de métodos de pago.")
+
+                with pestanas[5]:
+                    meseros_df = analista.performance_meseros()
+                    if meseros_df is not None and not meseros_df.empty:
+                        st.subheader("Recaudación por mesero")
+                        st.dataframe(
+                            meseros_df,
+                            hide_index=True,
+                            use_container_width=True,
+                            column_config={
+                                "Total_Vendido": st.column_config.NumberColumn("Total Vendido", format="Bs %,.0f"),
+                                "Ordenes_Totales": st.column_config.NumberColumn("Órdenes", format="%d"),
+                                "Anulaciones": st.column_config.NumberColumn("Anulaciones", format="%d"),
+                                "% Anulacion": st.column_config.NumberColumn("% Anulación", format="%.1f%%")
+                            }
+                        )
+                    else:
+                        st.info("No hay datos de meseros disponibles.")
             # -------------------------------------------------------
             #                     REPORTE INDICE
             # -------------------------------------------------------
@@ -407,14 +495,11 @@ if modo_app == "📊 Análisis Individual":
                     st.subheader("🪑 Ocupación de Mesas")
                     hm = ops.heatmap_mesas()
                     if hm is not None:
-                        # medir/colorear por número de ocupaciones (veces que se usó la mesa)
-                        color_col = "Ocupaciones" if "Ocupaciones" in hm.columns else (
-                                    "Facturacion_Total" if "Facturacion_Total" in hm.columns else None)
-                        if color_col:
-                            fig = px.treemap(hm, path=['Mesa_Real'], values='Ocupaciones', color=color_col)
+                        fig = renderizar_mapa_mesas(hm)
+                        if fig:
+                            st.plotly_chart(fig, use_container_width=True)
                         else:
-                            fig = px.treemap(hm, path=['Mesa_Real'], values='Ocupaciones')
-                        st.plotly_chart(fig, width='stretch')
+                            st.warning("No se pudo generar el mapa de mesas.")
                     else: st.warning("No hay información de mesas.")
             
             else:
@@ -464,26 +549,24 @@ elif modo_app == "🔗 Análisis Maestro (Fusión)":
                     c_map1, c_map2 = st.columns([2, 1])
                     
                     with c_map1:
-                        st.subheader("Mapa de Calor: Frecuencia de Uso")
-                        # CAMBIO: El tamaño es la ocupación (veces usado), el color es el ticket promedio
-                        # Así ves: Mesas muy usadas (Grande) y si gastan mucho o poco (Rojo/Azul)
-                        fig_tree = px.treemap(
-                            hm, 
-                            path=['Mesa_Real'], 
-                            values='Ocupaciones', 
-                            color='Ticket_Promedio',
-                            color_continuous_scale='RdBu', 
-                            title="Tamaño = Cantidad Visitas | Color = Ticket Promedio"
-                        )
-                        st.plotly_chart(fig_tree, use_container_width=True)
+                        st.subheader("Mapa de Ocupación del Restaurante")
+                        fig_map = renderizar_mapa_mesas(hm)
+                        if fig_map:
+                            st.plotly_chart(fig_map, use_container_width=True)
+                        else:
+                            st.warning("No se pudo generar el mapa.")
                     
                     with c_map2:
                         st.subheader("Top Mesas (Por Visitas)")
-                        # Tabla simple ordenada por ocupación
                         st.dataframe(
                             hm[['Mesa_Real', 'Ocupaciones', 'Ticket_Promedio']].head(15)
                             .style.format({"Ticket_Promedio": "Bs {:,.2f}"})
                         )
+                        
+                        st.markdown("---")
+                        st.caption("💡 **Leyenda del Mapa:**")
+                        st.caption("• **Tamaño**: Cantidad de visitas")
+                        st.caption("• **Color**: Ticket promedio (Rojo=Bajo, Verde=Alto)")
                 else:
                     st.warning("No se encontraron datos de mesas.")
 
