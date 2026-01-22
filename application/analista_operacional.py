@@ -244,12 +244,12 @@ class AnalistaOperacional:
                 if 1 <= num <= 2:
                     return f"P{num}"
 
-            # SALA sin número específico (ej. "Sala 1", nombres de personas, etc.)
-            if "SALA" in mesa:
+            # SALA sin número específico (ej. "Sala 1" genérica)
+            if "SALA" in mesa or "SALON" in mesa:
                 return "SALA"
 
-            # Fallback: nombres de personas, cuentas, etc. → SALA
-            return "SALA"
+            # Fallback: nombres de personas, cuentas, etc. → filtrar
+            return None
 
         df_mesas = df_mesas.copy()
         df_mesas["Mesa_Normalizada"] = df_mesas["Mesa_Real"].apply(normalizar_mesa)
