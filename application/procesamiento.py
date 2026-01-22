@@ -360,46 +360,55 @@ class AnalistaDeDatos:
     def basket_analysis(self, top_n=20, min_support=2):
         """
         Análisis de mercado simple: pares de productos que ocurren juntos.
-        Requiere que exista 'Detalle' o que se pase un dataframe transaccion->items.
-        Retorna DataFrame con pares, conteo y soporte relativo.
+        ACTUALIZADO: Usa regex robusto con \s+ para separar items.
         """
         if "Detalle" not in self.df.columns and "producto" not in self.df.columns:
             return None
+
         # Construir lista de transacciones (lista de sets de productos)
         tx_items = []
+
         if "Detalle" in self.df.columns:
-            patron = r'(\d+)\s*[x×]\s*(.+?)(?=\s\d+\s*[x×]|$)'
+            patron = r'(\d+)\s*[x×]\s*(.+?)(?=\s+\d+\s*[x×]|$)' 
             df_valid = self._excluir_alquiler(self.df.copy())
-            grouped = df_valid[df_valid["Es_Valido"]==True].groupby("Id")["Detalle"].agg(lambda s: " ||| ".join(s.dropna().astype(str)))
+            grouped = df_valid[df_valid["Es_Valido"]==True].groupby("Id")["Detalle"].agg(lambda s: "   ".join(s.dropna().astype(str)))
+            
             for detalle in grouped:
                 matches = re.findall(patron, str(detalle))
                 items = [m[1].strip().lower() for m in matches if m[1].strip()]
+                
                 if items:
                     tx_items.append(list(set(items)))
         else:
-            # si ya hay columna 'producto' por fila
             df_valid = self._excluir_alquiler(self.df.copy())
             grouped = df_valid[df_valid["Es_Valido"]==True].groupby("ticket_id")["producto"].agg(lambda s: list(set(s.dropna().astype(str).str.lower())))
             tx_items = grouped.tolist()
-        # contar pares
+
         pair_counts = Counter()
         item_counts = Counter()
+        
         for items in tx_items:
             for it in items:
                 item_counts[it] += 1
             for a,b in itertools.combinations(sorted(items),2):
                 pair_counts[(a,b)] += 1
+        
         total_tx = len(tx_items)
         if total_tx == 0:
             return None
+            
         rows = []
         for (a,b),cnt in pair_counts.most_common(top_n):
             support = cnt / total_tx
             conf_a = cnt / item_counts[a] if item_counts[a] else 0
             conf_b = cnt / item_counts[b] if item_counts[b] else 0
-            rows.append({
-                "item_a": a, "item_b": b, "count": cnt, "support": support, "conf_a->b": conf_a, "conf_b->a": conf_b
-            })
+            
+            if cnt >= min_support: 
+                rows.append({
+                    "item_a": a, "item_b": b, "count": cnt, 
+                    "support": support, "conf_a->b": conf_a, "conf_b->a": conf_b
+                })
+                
         return pd.DataFrame(rows)
 
     def market_basket_rules(self, min_support=0.01, min_confidence=0.3, max_len=3, top_n=50):

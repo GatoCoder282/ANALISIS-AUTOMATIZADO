@@ -354,36 +354,48 @@ if modo_app == "📊 Análisis Individual":
                     if not df_prod_canal.empty:
                         top_base = df_prod_canal.groupby("Producto_Base")["Cantidad"].sum().nlargest(15).reset_index()
                         fig_top = px.bar(top_base, x="Cantidad", y="Producto_Base", orientation="h", text_auto=True, color="Cantidad")
+                        fig_top.update_layout(yaxis=dict(autorange="reversed"))
                         st.plotly_chart(fig_top, width='stretch', key=f"fig_top_{nombre}")
                     else:
                         st.info("Sin productos detallados para este canal.")
 
-                    st.markdown("### Variantes y modificadores")
+                    st.markdown("### Variantes") # Ya no "y modificadores" si quitaste esa parte
+
                     if not df_prod_canal.empty:
-                        c_var, c_mod = st.columns(2)
+                        # 1. El selector de producto queda arriba (ancho completo)
+                        productos_disponibles = sorted(df_prod_canal["Producto_Base"].unique())
+                        prod_sel = st.selectbox("Producto", productos_disponibles, key=f"prod_{nombre}")
+                        
+                        # 2. Procesamiento de datos
+                        df_sel = df_prod_canal[df_prod_canal["Producto_Base"] == prod_sel]
+                        total_prod = df_sel["Cantidad"].sum()
+                        variantes = df_sel.groupby("Variante")["Cantidad"].sum().reset_index()
+                        variantes["Porcentaje"] = variantes["Cantidad"] / total_prod * 100 if total_prod else 0
 
-                        with c_var:
-                            productos_disponibles = sorted(df_prod_canal["Producto_Base"].unique())
-                            prod_sel = st.selectbox("Producto", productos_disponibles, key=f"prod_{nombre}")
-                            df_sel = df_prod_canal[df_prod_canal["Producto_Base"] == prod_sel]
-                            total_prod = df_sel["Cantidad"].sum()
-                            variantes = df_sel.groupby("Variante")["Cantidad"].sum().reset_index()
-                            variantes["Porcentaje"] = variantes["Cantidad"] / total_prod * 100 if total_prod else 0
-                            if not variantes.empty:
-                                fig_var = px.pie(variantes, values="Cantidad", names="Variante", title=f"Variantes de {prod_sel}", hole=0.45)
-                                st.plotly_chart(fig_var, width='stretch', key=f"fig_var_{nombre}")
-                                st.dataframe(variantes, hide_index=True, use_container_width=True)
-                            else:
-                                st.info("Sin variantes registradas para este producto.")
+                        if not variantes.empty:
+                            # 3. AQUÍ CREAMOS LAS COLUMNAS: Gráfico (Izquierda) | Tabla (Derecha)
+                            # El array [2, 1] le da más espacio al gráfico (2/3) y menos a la tabla (1/3)
+                            col_grafico, col_tabla = st.columns([2, 1]) 
 
-                        with c_mod:
-                            mods = df_prod_canal[df_prod_canal["Variante"] != "Original/Sin Cambios"]
-                            if not mods.empty:
-                                top_mods = mods.groupby("Variante")["Cantidad"].sum().nlargest(10).reset_index()
-                                fig_mod = px.bar(top_mods, x="Cantidad", y="Variante", title="Modificadores más comunes", color_discrete_sequence=["#FF6692"])
-                                st.plotly_chart(fig_mod, width='stretch', key=f"fig_mod_{nombre}")
-                            else:
-                                st.info("No hay modificadores distintos al original.")
+                            with col_grafico:
+                                fig_var = px.pie(variantes, values="Cantidad", names="Variante", 
+                                                title=f"Distribución de {prod_sel}", hole=0.45)
+                                # Opcional: poner la leyenda abajo si molesta a los lados
+                                # fig_var.update_layout(legend=dict(orientation="h", y=-0.1))
+                                st.plotly_chart(fig_var, use_container_width=True, key=f"fig_var_{nombre}")
+
+                            with col_tabla:
+                                # Agregué un margen superior o un título pequeño para que no se vea desalineado
+                                st.write(f"**Total: {total_prod}**") 
+                                st.dataframe(
+                                    variantes[["Variante", "Cantidad", "Porcentaje"]], 
+                                    hide_index=True, 
+                                    use_container_width=True,
+                                    height=300 # Opcional: fuerza una altura similar al gráfico si hay pocas filas
+                                )
+                        else:
+                            st.info("Sin variantes registradas para este producto.")
+
                     else:
                         st.info("Sin detalle de productos para analizar variantes.")
 
@@ -402,10 +414,10 @@ if modo_app == "📊 Análisis Individual":
                     else:
                         st.info("Sin detalle de productos para analizar combos.")
 
-                    reglas = AnalistaDeDatos(df_canal, "VENTAS").basket_analysis(top_n=10, min_support=2)
+                    reglas = AnalistaDeDatos(df_canal, "VENTAS").basket_analysis(top_n=20, min_support=2)
                     if reglas is not None:
                         reglas["Pareja"] = reglas.apply(lambda r: f"{str(r['item_a']).title()} + {str(r['item_b']).title()}", axis=1)
-                        st.write("Top 10 parejas de productos más solicitados")
+                        st.write("Top 20 parejas de productos más solicitados")
                         st.dataframe(reglas[["Pareja", "count", "support", "conf_a->b", "conf_b->a"]], hide_index=True, use_container_width=True)
                     else:
                         st.info("No se identificaron parejas frecuentes en este canal.")
