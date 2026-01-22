@@ -359,6 +359,7 @@ if modo_app == "📊 Análisis Individual":
                     else:
                         st.info("Sin productos detallados para este canal.")
 
+                    
                     st.markdown("### Variantes") # Ya no "y modificadores" si quitaste esa parte
 
                     if not df_prod_canal.empty:
@@ -504,6 +505,22 @@ if modo_app == "📊 Análisis Individual":
                         )
                     else:
                         st.info("No hay datos de meseros disponibles.")
+
+                st.markdown("### Cantidad de ventas por mes")
+                if "Fecha_DT" in analista.df.columns:
+                    df_mes = analista._excluir_alquiler(analista.df.copy())
+                    if "Es_Valido" in df_mes.columns:
+                        df_mes = df_mes[df_mes["Es_Valido"] == True]
+                    df_mes["Mes"] = df_mes["Fecha_DT"].dt.to_period("M").astype(str)
+                    ventas_mes = df_mes.groupby("Mes")["Id"].nunique().reset_index().rename(columns={"Id": "Transacciones"})
+                    ventas_mes = ventas_mes.sort_values("Mes")
+                    if not ventas_mes.empty:
+                        fig_mes = px.bar(ventas_mes, x="Mes", y="Transacciones", title="Transacciones por mes", text_auto=True)
+                        st.plotly_chart(fig_mes, use_container_width=True, key="ventas_por_mes")
+                    else:
+                        st.info("No hay transacciones para calcular el resumen mensual.")
+                else:
+                    st.info("No hay información de fecha para agrupar por mes.")
             # -------------------------------------------------------
             #                     REPORTE INDICE
             # -------------------------------------------------------

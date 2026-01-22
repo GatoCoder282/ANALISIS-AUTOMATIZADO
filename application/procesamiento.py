@@ -399,9 +399,9 @@ class AnalistaDeDatos:
             
         rows = []
         for (a,b),cnt in pair_counts.most_common(top_n):
-            support = cnt / total_tx
-            conf_a = cnt / item_counts[a] if item_counts[a] else 0
-            conf_b = cnt / item_counts[b] if item_counts[b] else 0
+            support = (cnt / total_tx) * 100
+            conf_a = (cnt / item_counts[a]) * 100 if item_counts[a] else 0
+            conf_b = (cnt / item_counts[b]) * 100 if item_counts[b] else 0
             
             if cnt >= min_support: 
                 rows.append({
