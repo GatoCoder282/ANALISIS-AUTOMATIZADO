@@ -36,7 +36,4 @@ Thumbs.db
 .ipynb_checkpoints/
 
 # Data downloads (generated files)
-# Ignore downloaded reports; keep code-only in repo
-data/reportes/*
-# Uncomment to keep the folder tracked with a placeholder
-!data/reportes/.gitkeep
+# Reports are now tracked in repo

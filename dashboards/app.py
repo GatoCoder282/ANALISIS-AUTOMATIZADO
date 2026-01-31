@@ -301,7 +301,8 @@ if modo_app == "📊 Análisis Individual":
                 total_ventas_validas = df_global_valid["Monto total"].sum()
 
                 CANAL_ALIASES = {
-                    "Mesa y Recojo": ["MESA", "RECOJO", "RETIRO", "PICKUP", "PARA LLEVAR"],
+                    "Mesa": ["MESA", "EN LOCAL", "DINE IN"],
+                    "Recojo": ["RECOJO", "RETIRO", "PICKUP", "PARA LLEVAR"],
                     "Interno": ["INTERNO"],
                     "PedidosYa": ["PEDIDOSYA", "PEDIDOS YA", "PEDIDOS-YA"],
                     "Yango": ["YANGO"]
@@ -438,28 +439,266 @@ if modo_app == "📊 Análisis Individual":
                     else:
                         c_d.info("No hay información de día disponible.")
 
+                    st.markdown("### Venta total (monto) por hora y día")
+                    c_vh, c_vd = st.columns(2)
+                    if "Hora_Num" in df_canal.columns:
+                        ventas_hora = df_canal.groupby("Hora_Num")["Monto total"].sum().reset_index().rename(columns={"Monto total": "Venta_Total"})
+                        c_vh.plotly_chart(px.bar(ventas_hora, x="Hora_Num", y="Venta_Total", title="Venta total por hora (Bs)", text_auto=True), width='stretch', key=f"venta_hora_{nombre}")
+                    else:
+                        c_vh.info("No hay información horaria disponible.")
+
+                    if "Dia_Semana" in df_canal.columns:
+                        ventas_dia = df_canal.groupby("Dia_Semana")["Monto total"].sum().reindex(orden_dias).dropna().reset_index().rename(columns={"Monto total": "Venta_Total"})
+                        c_vd.plotly_chart(px.bar(ventas_dia, x="Dia_Semana", y="Venta_Total", title="Venta total por día (Bs)", text_auto=True), width='stretch', key=f"venta_dia_{nombre}")
+                    else:
+                        c_vd.info("No hay información de día disponible.")
+
+                    st.markdown("### Ticket promedio por hora y día")
+                    c_th, c_td = st.columns(2)
+                    if "Hora_Num" in df_canal.columns:
+                        ticket_hora = df_canal.groupby("Hora_Num").agg(
+                            Monto_Total=("Monto total", "sum"),
+                            Pedidos=("Id", "nunique")
+                        ).reset_index()
+                        ticket_hora["Ticket_Promedio"] = ticket_hora["Monto_Total"] / ticket_hora["Pedidos"]
+                        c_th.plotly_chart(px.bar(ticket_hora, x="Hora_Num", y="Ticket_Promedio", title="Ticket promedio por hora (Bs)", text_auto=True), width='stretch', key=f"ticket_hora_{nombre}")
+                    else:
+                        c_th.info("No hay información horaria disponible.")
+
+                    if "Dia_Semana" in df_canal.columns:
+                        ticket_dia = df_canal.groupby("Dia_Semana").agg(
+                            Monto_Total=("Monto total", "sum"),
+                            Pedidos=("Id", "nunique")
+                        ).reindex(orden_dias).dropna().reset_index()
+                        ticket_dia["Ticket_Promedio"] = ticket_dia["Monto_Total"] / ticket_dia["Pedidos"]
+                        c_td.plotly_chart(px.bar(ticket_dia, x="Dia_Semana", y="Ticket_Promedio", title="Ticket promedio por día (Bs)", text_auto=True), width='stretch', key=f"ticket_dia_{nombre}")
+                    else:
+                        c_td.info("No hay información de día disponible.")
+
+                    # Análisis detallado por día de la semana
+                    st.markdown("### Análisis por día de la semana")
+                    if "Dia_Semana" in df_canal.columns and "Hora_Num" in df_canal.columns:
+                        # Mapeo de nombres en inglés a español para mejor UX
+                        dias_map = {
+                            'Monday': 'Lunes',
+                            'Tuesday': 'Martes',
+                            'Wednesday': 'Miércoles',
+                            'Thursday': 'Jueves',
+                            'Friday': 'Viernes',
+                            'Saturday': 'Sábado',
+                            'Sunday': 'Domingo'
+                        }
+                        dias_disponibles = [d for d in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] 
+                                           if d in df_canal["Dia_Semana"].values]
+                        
+                        if dias_disponibles:
+                            dia_seleccionado = st.selectbox(
+                                "Selecciona un día:", 
+                                dias_disponibles,
+                                format_func=lambda x: dias_map.get(x, x),
+                                key=f"dia_sel_{nombre}"
+                            )
+                            
+                            # Filtrar datos del día seleccionado
+                            df_dia = df_canal[df_canal["Dia_Semana"] == dia_seleccionado].copy()
+                            
+                            if not df_dia.empty:
+                                # Calcular totales de la semana para porcentaje
+                                pedidos_semana = df_canal["Id"].nunique()
+                                monto_semana = df_canal["Monto total"].sum()
+                                
+                                # KPIs del día
+                                pedidos_dia = df_dia["Id"].nunique()
+                                monto_dia = df_dia["Monto total"].sum()
+                                ticket_prom_dia = monto_dia / pedidos_dia if pedidos_dia > 0 else 0
+                                
+                                # Porcentajes respecto a la semana
+                                porc_pedidos = (pedidos_dia / pedidos_semana * 100) if pedidos_semana > 0 else 0
+                                porc_monto = (monto_dia / monto_semana * 100) if monto_semana > 0 else 0
+                                
+                                k_d1, k_d2, k_d3 = st.columns(3)
+                                k_d1.metric(
+                                    f"Pedidos ({dias_map.get(dia_seleccionado, dia_seleccionado)})", 
+                                    pedidos_dia,
+                                    f"{porc_pedidos:.1f}% de la semana"
+                                )
+                                k_d2.metric("Ticket Promedio", f"Bs {ticket_prom_dia:,.0f}")
+                                k_d3.metric(
+                                    "Monto Total", 
+                                    f"Bs {monto_dia:,.0f}",
+                                    f"{porc_monto:.1f}% de la semana"
+                                )
+                                
+                                # Análisis por hora del día seleccionado
+                                st.markdown(f"#### Pedidos por hora - {dias_map.get(dia_seleccionado, dia_seleccionado)}")
+                                horas_dia = df_dia.groupby("Hora_Num").agg({
+                                    "Id": "nunique",
+                                    "Monto total": "sum"
+                                }).reset_index()
+                                horas_dia.columns = ["Hora", "Pedidos", "Monto"]
+                                horas_dia["Ticket_Promedio"] = horas_dia["Monto"] / horas_dia["Pedidos"]
+                                horas_dia = horas_dia.sort_values("Hora")
+                                
+                                # Gráfico de pedidos por hora
+                                fig_hora_dia = px.bar(
+                                    horas_dia, 
+                                    x="Hora", 
+                                    y="Pedidos",
+                                    title=f"Distribución horaria - {dias_map.get(dia_seleccionado, dia_seleccionado)}",
+                                    text_auto=True,
+                                    color="Pedidos",
+                                    color_continuous_scale="Blues"
+                                )
+                                st.plotly_chart(fig_hora_dia, use_container_width=True, key=f"hora_dia_{nombre}")
+                                
+                                # Análisis por turno
+                                st.markdown("#### Análisis por Turno")
+                                df_dia["Turno"] = df_dia["Hora_Num"].apply(lambda h: "Mañana (00:00-14:00)" if h < 14 else "Tarde (14:00-00:00)")
+                                
+                                turnos = df_dia.groupby("Turno").agg({
+                                    "Id": "nunique",
+                                    "Monto total": "sum"
+                                }).reset_index()
+                                turnos.columns = ["Turno", "Pedidos", "Monto"]
+                                turnos["Ticket_Promedio"] = turnos["Monto"] / turnos["Pedidos"]
+                                
+                                # Calcular porcentajes respecto al total del día
+                                turnos["Porc_Pedidos"] = (turnos["Pedidos"] / pedidos_dia * 100) if pedidos_dia > 0 else 0
+                                turnos["Porc_Monto"] = (turnos["Monto"] / monto_dia * 100) if monto_dia > 0 else 0
+                                
+                                # Asegurar orden: Mañana primero
+                                turnos = turnos.sort_values("Turno", ascending=True)
+                                
+                                # Mostrar métricas por turno
+                                col_turnos = st.columns(len(turnos))
+                                for idx, (_, turno_row) in enumerate(turnos.iterrows()):
+                                    with col_turnos[idx]:
+                                        st.markdown(f"**{turno_row['Turno']}**")
+                                        st.metric(
+                                            "Pedidos", 
+                                            f"{int(turno_row['Pedidos'])}",
+                                            f"{turno_row['Porc_Pedidos']:.1f}% del día"
+                                        )
+                                        st.metric("Ticket Promedio", f"Bs {turno_row['Ticket_Promedio']:,.0f}")
+                                        st.metric(
+                                            "Monto Total", 
+                                            f"Bs {turno_row['Monto']:,.0f}",
+                                            f"{turno_row['Porc_Monto']:.1f}% del día"
+                                        )
+                                
+                                # Tabla detallada de turnos
+                                with st.expander("Ver tabla detallada por turno"):
+                                    st.dataframe(
+                                        turnos[["Turno", "Pedidos", "Porc_Pedidos", "Monto", "Porc_Monto", "Ticket_Promedio"]].style.format({
+                                            "Pedidos": "{:,.0f}",
+                                            "Porc_Pedidos": "{:.1f}%",
+                                            "Monto": "Bs {:,.2f}",
+                                            "Porc_Monto": "{:.1f}%",
+                                            "Ticket_Promedio": "Bs {:,.2f}"
+                                        }),
+                                        hide_index=True,
+                                        use_container_width=True
+                                    )
+                            else:
+                                st.info(f"No hay datos para {dias_map.get(dia_seleccionado, dia_seleccionado)}.")
+                        else:
+                            st.info("No hay datos de días de la semana disponibles.")
+                    else:
+                        st.info("No hay información suficiente para análisis por día.")
+
+                    # Análisis mensual por canal
+                    st.markdown(f"### Resumen de ventas por mes - {nombre}")
+                    if "Fecha_DT" in df_canal.columns:
+                        df_mes_canal = df_canal.copy()
+                        df_mes_canal["Mes"] = df_mes_canal["Fecha_DT"].dt.to_period("M").astype(str)
+                        
+                        ventas_mes_canal = df_mes_canal.groupby("Mes").agg({
+                            "Id": "nunique",
+                            "Monto total": "sum"
+                        }).reset_index()
+                        ventas_mes_canal.columns = ["Mes", "Transacciones", "Monto_Total"]
+                        ventas_mes_canal["Ticket_Promedio"] = ventas_mes_canal["Monto_Total"] / ventas_mes_canal["Transacciones"]
+                        ventas_mes_canal = ventas_mes_canal.sort_values("Mes")
+                        
+                        if not ventas_mes_canal.empty:
+                            col_m1, col_m2 = st.columns(2)
+                            
+                            with col_m1:
+                                fig_mes_trans = px.bar(
+                                    ventas_mes_canal, 
+                                    x="Mes", 
+                                    y="Transacciones", 
+                                    title=f"Transacciones por mes - {nombre}", 
+                                    text_auto=True,
+                                    color="Transacciones"
+                                )
+                                st.plotly_chart(fig_mes_trans, use_container_width=True, key=f"ventas_mes_trans_{nombre}")
+                            
+                            with col_m2:
+                                fig_mes_monto = px.bar(
+                                    ventas_mes_canal, 
+                                    x="Mes", 
+                                    y="Monto_Total", 
+                                    title=f"Monto recaudado por mes - {nombre} (Bs)", 
+                                    text_auto=".0f",
+                                    color="Monto_Total",
+                                    color_continuous_scale="Greens"
+                                )
+                                st.plotly_chart(fig_mes_monto, use_container_width=True, key=f"ventas_mes_monto_{nombre}")
+                            
+                            fig_mes_ticket = px.line(
+                                ventas_mes_canal, 
+                                x="Mes", 
+                                y="Ticket_Promedio", 
+                                title=f"Evolución del ticket promedio - {nombre} (Bs)",
+                                markers=True,
+                                text="Ticket_Promedio"
+                            )
+                            fig_mes_ticket.update_traces(texttemplate='Bs %{text:,.0f}', textposition="top center")
+                            st.plotly_chart(fig_mes_ticket, use_container_width=True, key=f"ventas_mes_ticket_{nombre}")
+                            
+                            with st.expander("Ver tabla detallada por mes"):
+                                st.dataframe(
+                                    ventas_mes_canal.style.format({
+                                        "Transacciones": "{:,.0f}",
+                                        "Monto_Total": "Bs {:,.2f}",
+                                        "Ticket_Promedio": "Bs {:,.2f}"
+                                    }),
+                                    hide_index=True,
+                                    use_container_width=True
+                                )
+                        else:
+                            st.info(f"No hay transacciones mensuales para {nombre}.")
+                    else:
+                        st.info("No hay información de fecha para agrupar por mes.")
+
                 pestanas = st.tabs([
-                    "🪑 Mesa y Recojo",
+                    "🪑 Mesa",
+                    "🥡 Recojo",
                     "🏢 Interno",
                     "🛵 PedidosYa",
                     "🚚 Yango",
                     "💳 Pagos",
-                    "🧑‍🍳 Meseros"
+                    "🧑‍🍳 Meseros",
+                    "📊 Total"
                 ])
 
                 with pestanas[0]:
-                    render_tab_canal("Mesa y Recojo", CANAL_ALIASES["Mesa y Recojo"])
+                    render_tab_canal("Mesa", CANAL_ALIASES["Mesa"])
 
                 with pestanas[1]:
-                    render_tab_canal("Interno", CANAL_ALIASES["Interno"], permitir_internos=True)
+                    render_tab_canal("Recojo", CANAL_ALIASES["Recojo"])    
 
                 with pestanas[2]:
-                    render_tab_canal("PedidosYa", CANAL_ALIASES["PedidosYa"])
+                    render_tab_canal("Interno", CANAL_ALIASES["Interno"], permitir_internos=True)
 
                 with pestanas[3]:
-                    render_tab_canal("Yango", CANAL_ALIASES["Yango"], incluir_alquiler=True)
+                    render_tab_canal("PedidosYa", CANAL_ALIASES["PedidosYa"])
 
                 with pestanas[4]:
+                    render_tab_canal("Yango", CANAL_ALIASES["Yango"], incluir_alquiler=True)
+
+                with pestanas[5]:
                     analisis_pagos = analista.analisis_pagos_avanzado()
 
                     if analisis_pagos:
@@ -484,43 +723,444 @@ if modo_app == "📊 Análisis Individual":
                             st.plotly_chart(fig_stack, width='stretch', key="pagos_stack")
 
                         with st.expander("Ver Tabla Financiera Detallada"):
-                            st.dataframe(analisis_pagos["general"].style.format({"Venta_Total": "Bs {:,.2f}", "Ticket_Promedio": "Bs {:,.2f}"}))
+                            st.dataframe(
+                                analisis_pagos["general"].style.format({
+                                    "Venta_Total": "Bs {:,.2f}",
+                                    "Ticket_Promedio": "Bs {:,.2f}",
+                                    "Venta_Facturada": "Bs {:,.2f}",
+                                    "%_Facturado": "{:.1f}%"
+                                })
+                            )
                     else:
                         st.info("No se encontraron datos de métodos de pago.")
 
-                with pestanas[5]:
+                with pestanas[6]:
                     meseros_df = analista.performance_meseros()
                     if meseros_df is not None and not meseros_df.empty:
-                        st.subheader("Recaudación por mesero")
+                        mesero_norm = (
+                            meseros_df["Mesero"]
+                            .astype(str)
+                            .str.replace(r"\s+", " ", regex=True)
+                            .str.strip()
+                            .str.lower()
+                            .str.normalize("NFKD")
+                            .str.encode("ascii", errors="ignore")
+                            .str.decode("utf-8")
+                        )
+                        meseros_df = meseros_df[mesero_norm != "pedro triveno"]
+                    if meseros_df is not None and not meseros_df.empty:
+                        st.subheader("Recaudación y Eficiencia por Mesero")
+                        
+                        # Mostrar KPIs generales si hay datos de horas trabajadas
+                        if "Horas_Trabajadas" in meseros_df.columns:
+                            total_horas = meseros_df["Horas_Trabajadas"].sum()
+                            total_ventas = meseros_df["Total_Vendido"].sum()
+                            total_ordenes = meseros_df["Ordenes_Totales"].sum()
+                            
+                            col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
+                            col_kpi1.metric("Horas Totales", f"{total_horas:,.1f} hrs")
+                            col_kpi2.metric("Ventas Totales", f"Bs {total_ventas:,.0f}")
+                            col_kpi3.metric("Órdenes Totales", f"{total_ordenes:,.0f}")
+                            col_kpi4.metric("Promedio por Hora", f"Bs {total_ventas/total_horas:,.0f}/hr" if total_horas > 0 else "N/A")
+                            
+                            st.markdown("---")
+                        
+                        # Configurar columnas según datos disponibles
+                        if "Horas_Trabajadas" in meseros_df.columns:
+                            column_config = {
+                                "Total_Vendido": st.column_config.NumberColumn("Total Vendido", format="$%.0f"),
+                                "Ordenes_Totales": st.column_config.NumberColumn("Órdenes", format="%d"),
+                                "Anulaciones": st.column_config.NumberColumn("Anulaciones", format="%d"),
+                                "% Anulacion": st.column_config.NumberColumn("% Anulación", format="%.1f%%"),
+                                "Horas_Trabajadas": st.column_config.NumberColumn("Horas Trabajadas", format="%.1f"),
+                                "Ventas_por_Hora": st.column_config.NumberColumn("Ventas/Hora", format="$%.0f", help="Eficiencia: Ventas generadas por hora trabajada"),
+                                "Ordenes_por_Hora": st.column_config.NumberColumn("Órdenes/Hora", format="%.1f", help="Productividad: Órdenes atendidas por hora"),
+                                "Ticket_Promedio": st.column_config.NumberColumn("Ticket Promedio", format="$%.0f", help="Valor promedio por orden")
+                            }
+                        else:
+                            column_config = {
+                                "Total_Vendido": st.column_config.NumberColumn("Total Vendido", format="$%.0f"),
+                                "Ordenes_Totales": st.column_config.NumberColumn("Órdenes", format="%d"),
+                                "Anulaciones": st.column_config.NumberColumn("Anulaciones", format="%d"),
+                                "% Anulacion": st.column_config.NumberColumn("% Anulación", format="%.1f%%"),
+                                "Ticket_Promedio": st.column_config.NumberColumn("Ticket Promedio", format="$%.0f")
+                            }
+                        
                         st.dataframe(
                             meseros_df,
                             hide_index=True,
                             use_container_width=True,
-                            column_config={
-                                "Total_Vendido": st.column_config.NumberColumn("Total Vendido", format="Bs %,.0f"),
-                                "Ordenes_Totales": st.column_config.NumberColumn("Órdenes", format="%d"),
-                                "Anulaciones": st.column_config.NumberColumn("Anulaciones", format="%d"),
-                                "% Anulacion": st.column_config.NumberColumn("% Anulación", format="%.1f%%")
-                            }
+                            column_config=column_config
                         )
+                        
+                        # Visualizaciones adicionales si hay métricas de eficiencia
+                        if "Ventas_por_Hora" in meseros_df.columns and "Ordenes_por_Hora" in meseros_df.columns:
+                            st.markdown("### Análisis de Eficiencia")
+                            
+                            col_chart1, col_chart2 = st.columns(2)
+                            
+                            with col_chart1:
+                                # Top 5 por ventas por hora
+                                top_ventas_hora = meseros_df.nlargest(5, "Ventas_por_Hora")
+                                fig_ventas = px.bar(
+                                    top_ventas_hora,
+                                    x="Ventas_por_Hora",
+                                    y="Mesero",
+                                    orientation="h",
+                                    title="Top 5: Ventas por Hora Trabajada",
+                                    text_auto=".0f",
+                                    color="Ventas_por_Hora",
+                                    color_continuous_scale="Greens"
+                                )
+                                fig_ventas.update_layout(yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig_ventas, use_container_width=True, key="ventas_hora_meseros")
+                            
+                            with col_chart2:
+                                # Top 5 por órdenes por hora
+                                top_ordenes_hora = meseros_df.nlargest(5, "Ordenes_por_Hora")
+                                fig_ordenes = px.bar(
+                                    top_ordenes_hora,
+                                    x="Ordenes_por_Hora",
+                                    y="Mesero",
+                                    orientation="h",
+                                    title="Top 5: Órdenes por Hora Trabajada",
+                                    text_auto=".1f",
+                                    color="Ordenes_por_Hora",
+                                    color_continuous_scale="Blues"
+                                )
+                                fig_ordenes.update_layout(yaxis=dict(autorange="reversed"))
+                                st.plotly_chart(fig_ordenes, use_container_width=True, key="ordenes_hora_meseros")
                     else:
                         st.info("No hay datos de meseros disponibles.")
 
-                st.markdown("### Cantidad de ventas por mes")
-                if "Fecha_DT" in analista.df.columns:
-                    df_mes = analista._excluir_alquiler(analista.df.copy())
-                    if "Es_Valido" in df_mes.columns:
-                        df_mes = df_mes[df_mes["Es_Valido"] == True]
-                    df_mes["Mes"] = df_mes["Fecha_DT"].dt.to_period("M").astype(str)
-                    ventas_mes = df_mes.groupby("Mes")["Id"].nunique().reset_index().rename(columns={"Id": "Transacciones"})
-                    ventas_mes = ventas_mes.sort_values("Mes")
-                    if not ventas_mes.empty:
-                        fig_mes = px.bar(ventas_mes, x="Mes", y="Transacciones", title="Transacciones por mes", text_auto=True)
-                        st.plotly_chart(fig_mes, use_container_width=True, key="ventas_por_mes")
+                with pestanas[7]:
+                    st.markdown("### 📊 Análisis Total (Todas las órdenes válidas)")
+                    st.info("Este análisis incluye: Mesa, Recojo, Delivery (PedidosYa, Yango), Interno. Excluye: Alquileres y órdenes anuladas.")
+                    
+                    # Filtrar todas las órdenes válidas excluyendo alquileres
+                    df_total = analista._excluir_alquiler(analista.df.copy())
+                    if "Es_Valido" in df_total.columns:
+                        df_total = df_total[df_total["Es_Valido"] == True]
+                    
+                    # Obtener productos totales
+                    df_productos_total = df_productos.copy() if df_productos is not None and not df_productos.empty else pd.DataFrame()
+                    
+                    if not df_total.empty:
+                        kpi_total = AnalistaDeDatos(df_total, "VENTAS").get_kpis_financieros()
+
+                        k1, k2, k3, k4, k5 = st.columns(5)
+                        k1.metric("Ventas Totales", f"Bs {kpi_total.get('Ventas Totales',0):,.0f}", "100% del total")
+                        k2.metric("Ticket Promedio", f"Bs {kpi_total.get('Ticket Promedio',0):,.0f}")
+                        k3.metric("Transacciones", kpi_total.get('Transacciones',0))
+                        k4.metric("Descuentos", f"Bs {kpi_total.get('Total Descuentos',0):,.0f}")
+                        k5.metric("Pendientes", f"Bs {kpi_total.get('Ventas Pendientes',0):,.0f}")
+
+                        st.markdown("### Top 15 productos más vendidos (Todos los canales)")
+                        if not df_productos_total.empty:
+                            top_base = df_productos_total.groupby("Producto_Base")["Cantidad"].sum().nlargest(15).reset_index()
+                            fig_top = px.bar(top_base, x="Cantidad", y="Producto_Base", orientation="h", text_auto=True, color="Cantidad")
+                            fig_top.update_layout(yaxis=dict(autorange="reversed"))
+                            st.plotly_chart(fig_top, use_container_width=True, key="fig_top_total")
+                        else:
+                            st.info("Sin productos detallados.")
+
+                        st.markdown("### Variantes")
+                        if not df_productos_total.empty:
+                            productos_disponibles = sorted(df_productos_total["Producto_Base"].unique())
+                            prod_sel = st.selectbox("Producto", productos_disponibles, key="prod_total")
+                            
+                            df_sel = df_productos_total[df_productos_total["Producto_Base"] == prod_sel]
+                            total_prod = df_sel["Cantidad"].sum()
+                            variantes = df_sel.groupby("Variante")["Cantidad"].sum().reset_index()
+                            variantes["Porcentaje"] = variantes["Cantidad"] / total_prod * 100 if total_prod else 0
+
+                            if not variantes.empty:
+                                col_grafico, col_tabla = st.columns([2, 1]) 
+
+                                with col_grafico:
+                                    fig_var = px.pie(variantes, values="Cantidad", names="Variante", 
+                                                    title=f"Distribución de {prod_sel}", hole=0.45)
+                                    st.plotly_chart(fig_var, use_container_width=True, key="fig_var_total")
+
+                                with col_tabla:
+                                    st.write(f"**Total: {total_prod}**") 
+                                    st.dataframe(
+                                        variantes[["Variante", "Cantidad", "Porcentaje"]], 
+                                        hide_index=True, 
+                                        use_container_width=True,
+                                        height=300
+                                    )
+                            else:
+                                st.info("Sin variantes registradas para este producto.")
+                        else:
+                            st.info("Sin detalle de productos para analizar variantes.")
+
+                        st.markdown("### Productos comprados juntos")
+                        if not df_productos_total.empty:
+                            pedidos = df_productos_total.groupby("Id_Venta")["Producto_Base"].apply(lambda s: tuple(sorted(set([p for p in s.dropna()]))))
+                            pedidos = pedidos[pedidos.apply(len) > 1]
+                            combos = pedidos.value_counts().head(5).reset_index()
+                            combos.columns = ["Pedido", "Veces"]
+                            combos["Pedido"] = combos["Pedido"].apply(lambda t: " + ".join(t))
+                            if not combos.empty:
+                                st.write("Top 5 pedidos completos:")
+                                st.dataframe(combos, hide_index=True, use_container_width=True)
+                            else:
+                                st.info("No hay pedidos con múltiples productos.")
+                        else:
+                            st.info("Sin detalle de productos para analizar combos.")
+
+                        reglas = AnalistaDeDatos(df_total, "VENTAS").basket_analysis(top_n=20, min_support=2)
+                        if reglas is not None:
+                            reglas["Pareja"] = reglas.apply(lambda r: f"{str(r['item_a']).title()} + {str(r['item_b']).title()}", axis=1)
+                            st.write("Top 20 parejas de productos más solicitados")
+                            st.dataframe(reglas[["Pareja", "count", "support", "conf_a->b", "conf_b->a"]], hide_index=True, use_container_width=True)
+                        else:
+                            st.info("No se identificaron parejas frecuentes.")
+
+                        st.markdown("### Frecuencia de pedidos")
+                        c_h, c_d = st.columns(2)
+                        if "Hora_Num" in df_total.columns:
+                            horas = df_total.groupby("Hora_Num")["Id"].nunique().reset_index().rename(columns={"Id": "Pedidos"})
+                            c_h.plotly_chart(px.bar(horas, x="Hora_Num", y="Pedidos", title="Cantidad de pedidos por hora"), use_container_width=True, key="freq_hora_total")
+                        else:
+                            c_h.info("No hay información horaria disponible.")
+
+                        if "Dia_Semana" in df_total.columns:
+                            orden_dias = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+                            dias = df_total.groupby("Dia_Semana")["Id"].nunique().reindex(orden_dias).dropna().reset_index().rename(columns={"Id": "Pedidos"})
+                            c_d.plotly_chart(px.bar(dias, x="Dia_Semana", y="Pedidos", title="Cantidad de pedidos por día"), use_container_width=True, key="freq_dia_total")
+                        else:
+                            c_d.info("No hay información de día disponible.")
+
+                        st.markdown("### Venta total (monto) por hora y día")
+                        c_vh, c_vd = st.columns(2)
+                        if "Hora_Num" in df_total.columns:
+                            ventas_hora = df_total.groupby("Hora_Num")["Monto total"].sum().reset_index().rename(columns={"Monto total": "Venta_Total"})
+                            c_vh.plotly_chart(px.bar(ventas_hora, x="Hora_Num", y="Venta_Total", title="Venta total por hora (Bs)", text_auto=True), use_container_width=True, key="venta_hora_total")
+                        else:
+                            c_vh.info("No hay información horaria disponible.")
+
+                        if "Dia_Semana" in df_total.columns:
+                            ventas_dia = df_total.groupby("Dia_Semana")["Monto total"].sum().reindex(orden_dias).dropna().reset_index().rename(columns={"Monto total": "Venta_Total"})
+                            c_vd.plotly_chart(px.bar(ventas_dia, x="Dia_Semana", y="Venta_Total", title="Venta total por día (Bs)", text_auto=True), use_container_width=True, key="venta_dia_total")
+                        else:
+                            c_vd.info("No hay información de día disponible.")
+
+                        st.markdown("### Ticket promedio por hora y día")
+                        c_th, c_td = st.columns(2)
+                        if "Hora_Num" in df_total.columns:
+                            ticket_hora = df_total.groupby("Hora_Num").agg(
+                                Monto_Total=("Monto total", "sum"),
+                                Pedidos=("Id", "nunique")
+                            ).reset_index()
+                            ticket_hora["Ticket_Promedio"] = ticket_hora["Monto_Total"] / ticket_hora["Pedidos"]
+                            c_th.plotly_chart(px.bar(ticket_hora, x="Hora_Num", y="Ticket_Promedio", title="Ticket promedio por hora (Bs)", text_auto=True), use_container_width=True, key="ticket_hora_total")
+                        else:
+                            c_th.info("No hay información horaria disponible.")
+
+                        if "Dia_Semana" in df_total.columns:
+                            ticket_dia = df_total.groupby("Dia_Semana").agg(
+                                Monto_Total=("Monto total", "sum"),
+                                Pedidos=("Id", "nunique")
+                            ).reindex(orden_dias).dropna().reset_index()
+                            ticket_dia["Ticket_Promedio"] = ticket_dia["Monto_Total"] / ticket_dia["Pedidos"]
+                            c_td.plotly_chart(px.bar(ticket_dia, x="Dia_Semana", y="Ticket_Promedio", title="Ticket promedio por día (Bs)", text_auto=True), use_container_width=True, key="ticket_dia_total")
+                        else:
+                            c_td.info("No hay información de día disponible.")
+
+                        # Análisis detallado por día de la semana
+                        st.markdown("### Análisis por día de la semana")
+                        if "Dia_Semana" in df_total.columns and "Hora_Num" in df_total.columns:
+                            dias_map = {
+                                'Monday': 'Lunes',
+                                'Tuesday': 'Martes',
+                                'Wednesday': 'Miércoles',
+                                'Thursday': 'Jueves',
+                                'Friday': 'Viernes',
+                                'Saturday': 'Sábado',
+                                'Sunday': 'Domingo'
+                            }
+                            dias_disponibles = [d for d in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] 
+                                               if d in df_total["Dia_Semana"].values]
+                            
+                            if dias_disponibles:
+                                dia_seleccionado = st.selectbox(
+                                    "Selecciona un día:", 
+                                    dias_disponibles,
+                                    format_func=lambda x: dias_map.get(x, x),
+                                    key="dia_sel_total"
+                                )
+                                
+                                df_dia = df_total[df_total["Dia_Semana"] == dia_seleccionado].copy()
+                                
+                                if not df_dia.empty:
+                                    # Calcular totales de la semana para porcentaje
+                                    pedidos_semana = df_total["Id"].nunique()
+                                    monto_semana = df_total["Monto total"].sum()
+                                    
+                                    pedidos_dia = df_dia["Id"].nunique()
+                                    monto_dia = df_dia["Monto total"].sum()
+                                    ticket_prom_dia = monto_dia / pedidos_dia if pedidos_dia > 0 else 0
+                                    
+                                    # Porcentajes respecto a la semana
+                                    porc_pedidos = (pedidos_dia / pedidos_semana * 100) if pedidos_semana > 0 else 0
+                                    porc_monto = (monto_dia / monto_semana * 100) if monto_semana > 0 else 0
+                                    
+                                    k_d1, k_d2, k_d3 = st.columns(3)
+                                    k_d1.metric(
+                                        f"Pedidos ({dias_map.get(dia_seleccionado, dia_seleccionado)})", 
+                                        pedidos_dia,
+                                        f"{porc_pedidos:.1f}% de la semana"
+                                    )
+                                    k_d2.metric("Ticket Promedio", f"Bs {ticket_prom_dia:,.0f}")
+                                    k_d3.metric(
+                                        "Monto Total", 
+                                        f"Bs {monto_dia:,.0f}",
+                                        f"{porc_monto:.1f}% de la semana"
+                                    )
+                                    
+                                    st.markdown(f"#### Pedidos por hora - {dias_map.get(dia_seleccionado, dia_seleccionado)}")
+                                    horas_dia = df_dia.groupby("Hora_Num").agg({
+                                        "Id": "nunique",
+                                        "Monto total": "sum"
+                                    }).reset_index()
+                                    horas_dia.columns = ["Hora", "Pedidos", "Monto"]
+                                    horas_dia["Ticket_Promedio"] = horas_dia["Monto"] / horas_dia["Pedidos"]
+                                    horas_dia = horas_dia.sort_values("Hora")
+                                    
+                                    fig_hora_dia = px.bar(
+                                        horas_dia, 
+                                        x="Hora", 
+                                        y="Pedidos",
+                                        title=f"Distribución horaria - {dias_map.get(dia_seleccionado, dia_seleccionado)}",
+                                        text_auto=True,
+                                        color="Pedidos",
+                                        color_continuous_scale="Blues"
+                                    )
+                                    st.plotly_chart(fig_hora_dia, use_container_width=True, key="hora_dia_total")
+                                    
+                                    st.markdown("#### Análisis por Turno")
+                                    df_dia["Turno"] = df_dia["Hora_Num"].apply(lambda h: "Mañana (00:00-14:00)" if h < 14 else "Tarde (14:00-00:00)")
+                                    
+                                    turnos = df_dia.groupby("Turno").agg({
+                                        "Id": "nunique",
+                                        "Monto total": "sum"
+                                    }).reset_index()
+                                    turnos.columns = ["Turno", "Pedidos", "Monto"]
+                                    turnos["Ticket_Promedio"] = turnos["Monto"] / turnos["Pedidos"]
+                                    
+                                    # Calcular porcentajes respecto al total del día
+                                    turnos["Porc_Pedidos"] = (turnos["Pedidos"] / pedidos_dia * 100) if pedidos_dia > 0 else 0
+                                    turnos["Porc_Monto"] = (turnos["Monto"] / monto_dia * 100) if monto_dia > 0 else 0
+                                    
+                                    turnos = turnos.sort_values("Turno", ascending=True)
+                                    
+                                    col_turnos = st.columns(len(turnos))
+                                    for idx, (_, turno_row) in enumerate(turnos.iterrows()):
+                                        with col_turnos[idx]:
+                                            st.markdown(f"**{turno_row['Turno']}**")
+                                            st.metric(
+                                                "Pedidos", 
+                                                f"{int(turno_row['Pedidos'])}",
+                                                f"{turno_row['Porc_Pedidos']:.1f}% del día"
+                                            )
+                                            st.metric("Ticket Promedio", f"Bs {turno_row['Ticket_Promedio']:,.0f}")
+                                            st.metric(
+                                                "Monto Total", 
+                                                f"Bs {turno_row['Monto']:,.0f}",
+                                                f"{turno_row['Porc_Monto']:.1f}% del día"
+                                            )
+                                    
+                                    with st.expander("Ver tabla detallada por turno"):
+                                        st.dataframe(
+                                            turnos[["Turno", "Pedidos", "Porc_Pedidos", "Monto", "Porc_Monto", "Ticket_Promedio"]].style.format({
+                                                "Pedidos": "{:,.0f}",
+                                                "Porc_Pedidos": "{:.1f}%",
+                                                "Monto": "Bs {:,.2f}",
+                                                "Porc_Monto": "{:.1f}%",
+                                                "Ticket_Promedio": "Bs {:,.2f}"
+                                            }),
+                                            hide_index=True,
+                                            use_container_width=True
+                                        )
+                                else:
+                                    st.info(f"No hay datos para {dias_map.get(dia_seleccionado, dia_seleccionado)}.")
+                            else:
+                                st.info("No hay datos de días de la semana disponibles.")
+                        else:
+                            st.info("No hay información suficiente para análisis por día.")
+
+                        # Análisis mensual GLOBAL (solo en Total)
+                        st.markdown("### Resumen de ventas por mes (Global)")
+                        if "Fecha_DT" in df_total.columns:
+                            df_mes = df_total.copy()
+                            df_mes["Mes"] = df_mes["Fecha_DT"].dt.to_period("M").astype(str)
+                            
+                            # Agregar análisis completo: transacciones, monto y ticket promedio
+                            ventas_mes = df_mes.groupby("Mes").agg({
+                                "Id": "nunique",
+                                "Monto total": "sum"
+                            }).reset_index()
+                            ventas_mes.columns = ["Mes", "Transacciones", "Monto_Total"]
+                            ventas_mes["Ticket_Promedio"] = ventas_mes["Monto_Total"] / ventas_mes["Transacciones"]
+                            ventas_mes = ventas_mes.sort_values("Mes")
+                            
+                            if not ventas_mes.empty:
+                                col_m1, col_m2 = st.columns(2)
+                                
+                                with col_m1:
+                                    fig_mes_trans = px.bar(
+                                        ventas_mes, 
+                                        x="Mes", 
+                                        y="Transacciones", 
+                                        title="Transacciones por mes (Todos los canales)", 
+                                        text_auto=True,
+                                        color="Transacciones"
+                                    )
+                                    st.plotly_chart(fig_mes_trans, use_container_width=True, key="ventas_por_mes_trans_global")
+                                
+                                with col_m2:
+                                    fig_mes_monto = px.bar(
+                                        ventas_mes, 
+                                        x="Mes", 
+                                        y="Monto_Total", 
+                                        title="Monto total recaudado por mes (Bs)", 
+                                        text_auto=".0f",
+                                        color="Monto_Total",
+                                        color_continuous_scale="Greens"
+                                    )
+                                    st.plotly_chart(fig_mes_monto, use_container_width=True, key="ventas_por_mes_monto_global")
+                                
+                                # Gráfico de ticket promedio
+                                fig_mes_ticket = px.line(
+                                    ventas_mes, 
+                                    x="Mes", 
+                                    y="Ticket_Promedio", 
+                                    title="Evolución del ticket promedio por mes (Bs)",
+                                    markers=True,
+                                    text="Ticket_Promedio"
+                                )
+                                fig_mes_ticket.update_traces(texttemplate='Bs %{text:,.0f}', textposition="top center")
+                                st.plotly_chart(fig_mes_ticket, use_container_width=True, key="ventas_por_mes_ticket_global")
+                                
+                                # Tabla detallada
+                                with st.expander("Ver tabla detallada por mes"):
+                                    st.dataframe(
+                                        ventas_mes.style.format({
+                                            "Transacciones": "{:,.0f}",
+                                            "Monto_Total": "Bs {:,.2f}",
+                                            "Ticket_Promedio": "Bs {:,.2f}"
+                                        }),
+                                        hide_index=True,
+                                        use_container_width=True
+                                    )
+                            else:
+                                st.info("No hay transacciones para calcular el resumen mensual.")
+                        else:
+                            st.info("No hay información de fecha para agrupar por mes.")
                     else:
-                        st.info("No hay transacciones para calcular el resumen mensual.")
-                else:
-                    st.info("No hay información de fecha para agrupar por mes.")
+                        st.info("No hay datos válidos para análisis total.")
             # -------------------------------------------------------
             #                     REPORTE INDICE
             # -------------------------------------------------------

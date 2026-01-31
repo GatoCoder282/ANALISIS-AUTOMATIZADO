@@ -201,28 +201,107 @@ class AnalistaDeDatos:
         return pd.DataFrame(items_vendidos)
 
     def performance_meseros(self):
-        """Analiza ventas y anulaciones por mesero"""
-        if "Mesero" not in self.df.columns: return None
-        # trabajar sobre copia excluyendo alquileres
+        """
+        Analiza ventas, anulaciones y eficiencia por mesero.
+        
+        Calcula horas trabajadas usando el rango entre primera y última orden por día,
+        luego genera métricas de eficiencia:
+        - Ventas por hora
+        - Órdenes por hora  
+        - Ticket promedio
+        """
+        if "Mesero" not in self.df.columns:
+            return None
+        
+        # Trabajar sobre copia excluyendo alquileres
         df = self._excluir_alquiler(self.df.copy())
-        
-        # Llenar nulos en mesero
         df["Mesero"] = df["Mesero"].fillna("Sin Asignar")
+        mesero_norm = (
+            df["Mesero"]
+            .astype(str)
+            .str.replace(r"\s+", " ", regex=True)
+            .str.strip()
+            .str.lower()
+            .str.normalize("NFKD")
+            .str.encode("ascii", errors="ignore")
+            .str.decode("utf-8")
+        )
+        df = df[mesero_norm != "pedro triveno"]
         
+        # --- CÁLCULO DE HORAS TRABAJADAS ---
+        horas_trabajadas = None
+        if "Fecha_DT" in df.columns:
+            print(f"✅ DEBUG: Columna Fecha_DT existe")
+        if "Fecha_DT" in df.columns:
+            df_con_fecha = df[df["Fecha_DT"].notna()].copy()
+
+            if not df_con_fecha.empty:
+                # Extraer fecha (sin hora) para agrupar por día
+                df_con_fecha["Fecha_Solo"] = df_con_fecha["Fecha_DT"].dt.date
+                # Para cada mesero+día, encontrar primera y última orden
+                rangos_diarios = df_con_fecha.groupby(["Mesero", "Fecha_Solo"])["Fecha_DT"].agg(
+                    Primera_Orden="min",
+                    Ultima_Orden="max"
+                ).reset_index()
+                
+                # Calcular horas trabajadas en cada día (diferencia en horas)
+                rangos_diarios["Horas_Dia"] = (
+                    rangos_diarios["Ultima_Orden"] - rangos_diarios["Primera_Orden"]
+                ).dt.total_seconds() / 3600
+                # Sumar horas totales por mesero
+                horas_trabajadas = rangos_diarios.groupby("Mesero")["Horas_Dia"].sum().reset_index()
+                horas_trabajadas.columns = ["Mesero", "Horas_Trabajadas"]
+        
+        
+        # --- RESUMEN PRINCIPAL ---
         resumen = df.groupby("Mesero").agg(
-            # Suma solo si es venta real
-            Total_Vendido=pd.NamedAgg(column="Monto total", aggfunc=lambda x: x[df.loc[x.index, "Es_Venta_Real"]].sum()),
+            Total_Vendido=pd.NamedAgg(
+                column="Monto total", 
+                aggfunc=lambda x: x[df.loc[x.index, "Es_Venta_Real"]].sum()
+            ),
             Ordenes_Totales=pd.NamedAgg(column="Id", aggfunc="count"),
-            # Cuenta anulados (Validez = ANULADO)
-            Anulaciones=pd.NamedAgg(column="Validez", aggfunc=lambda x: (x.astype(str).str.upper() == "ANULADO").sum())
+            Anulaciones=pd.NamedAgg(
+                column="Validez", 
+                aggfunc=lambda x: (x.astype(str).str.upper() == "ANULADO").sum()
+            )
         ).reset_index()
         
-        # Evitar división por cero
         resumen["% Anulacion"] = np.where(
             resumen["Ordenes_Totales"] > 0,
             (resumen["Anulaciones"] / resumen["Ordenes_Totales"]) * 100,
             0
         )
+        
+        # --- FUSIONAR CON HORAS TRABAJADAS Y CALCULAR MÉTRICAS DE EFICIENCIA ---
+        if horas_trabajadas is not None:
+            resumen = resumen.merge(horas_trabajadas, on="Mesero", how="left")
+            resumen["Horas_Trabajadas"] = resumen["Horas_Trabajadas"].fillna(0)
+            
+            # Métricas de eficiencia (evitar división por cero)
+            resumen["Ventas_por_Hora"] = np.where(
+                resumen["Horas_Trabajadas"] > 0,
+                resumen["Total_Vendido"] / resumen["Horas_Trabajadas"],
+                0
+            )
+            
+            resumen["Ordenes_por_Hora"] = np.where(
+                resumen["Horas_Trabajadas"] > 0,
+                resumen["Ordenes_Totales"] / resumen["Horas_Trabajadas"],
+                0
+            )
+            
+            resumen["Ticket_Promedio"] = np.where(
+                resumen["Ordenes_Totales"] > 0,
+                resumen["Total_Vendido"] / resumen["Ordenes_Totales"],
+                0
+            )
+        else:
+            # Si no hay datos de fecha, solo calcular ticket promedio básico
+            resumen["Ticket_Promedio"] = np.where(
+                resumen["Ordenes_Totales"] > 0,
+                resumen["Total_Vendido"] / resumen["Ordenes_Totales"],
+                0
+            )
         return resumen.sort_values("Total_Vendido", ascending=False)
     
     def analisis_pagos_avanzado(self):
@@ -240,21 +319,56 @@ class AnalistaDeDatos:
         # NOTA: Para Ticket Promedio financiero correcto, NO separamos pagos mixtos 
         # (ej: "Efectivo, QR" se trata como una categoría única "Mixto" o se deja tal cual
         # para no duplicar el monto al calcular promedios).
+
+        # Normalizar métodos de pago (orden y espacios) para unir combinaciones equivalentes
+        def _normalizar_metodo_pago(valor):
+            if pd.isna(valor):
+                return "Desconocido"
+            partes = [p.strip() for p in str(valor).split(",") if p.strip()]
+            if not partes:
+                return "Desconocido"
+            partes = [" ".join(p.split()) for p in partes]
+            partes = [p.title() for p in partes]
+            partes = sorted(partes)
+            return ", ".join(partes)
         
-        # 1. Tabla General (Agrupada por Método exacto)
-        general = df.groupby("Métodos de pago").agg(
+        # Detectar columna de factura (con y sin tilde)
+        col_factura = None
+        for c in ["Número factura", "Numero Factura", "Nro Factura", "Nro. Factura"]:
+            if c in df.columns:
+                col_factura = c
+                break
+
+        df = df.copy()
+        df["Metodo_Pago_Norm"] = df["Métodos de pago"].apply(_normalizar_metodo_pago)
+
+        if col_factura:
+            factura_mask = df[col_factura].notna() & (df[col_factura].astype(str).str.strip() != "")
+        else:
+            factura_mask = pd.Series(False, index=df.index)
+
+        # 1. Tabla General (Agrupada por Método normalizado)
+        general = df.groupby("Metodo_Pago_Norm").agg(
             Transacciones=("Id", "nunique"),
             Venta_Total=("Monto total", "sum"),
-            Ticket_Promedio=("Monto total", "mean")
+            Ticket_Promedio=("Monto total", "mean"),
+            Venta_Facturada=("Monto total", lambda x: x[factura_mask.loc[x.index]].sum())
         ).reset_index().sort_values("Venta_Total", ascending=False)
+        general["%_Facturado"] = np.where(
+            general["Venta_Total"] > 0,
+            (general["Venta_Facturada"] / general["Venta_Total"]) * 100,
+            0
+        )
+        general = general.rename(columns={"Metodo_Pago_Norm": "Métodos de pago"})
 
         # 2. Matriz por Tipo de Orden (Crosstab)
         # Filas: Método, Columnas: Tipo de Orden, Valores: Cantidad de Transacciones
         if "Tipo de orden" in df.columns:
             matriz_tipo = pd.crosstab(
-                df["Métodos de pago"], 
+                df["Metodo_Pago_Norm"], 
                 df["Tipo de orden"]
             ).reset_index()
+            matriz_tipo = matriz_tipo.rename(columns={"Metodo_Pago_Norm": "Métodos de pago"})
         else:
             matriz_tipo = None
 
