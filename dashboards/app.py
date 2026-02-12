@@ -417,7 +417,7 @@ if modo_app == "📊 Análisis Individual":
                         st.info("Sin detalle de productos para analizar combos.")
 
                     reglas = AnalistaDeDatos(df_canal, "VENTAS").basket_analysis(top_n=20, min_support=2)
-                    if reglas is not None:
+                    if reglas is not None and not reglas.empty and "item_a" in reglas.columns:
                         reglas["Pareja"] = reglas.apply(lambda r: f"{str(r['item_a']).title()} + {str(r['item_b']).title()}", axis=1)
                         st.write("Top 20 parejas de productos más solicitados")
                         st.dataframe(reglas[["Pareja", "count", "support", "conf_a->b", "conf_b->a"]], hide_index=True, use_container_width=True)
@@ -426,42 +426,71 @@ if modo_app == "📊 Análisis Individual":
 
                     st.markdown("### Frecuencia de pedidos")
                     c_h, c_d = st.columns(2)
+
                     if "Hora_Num" in df_canal.columns:
                         horas = df_canal.groupby("Hora_Num")["Id"].nunique().reset_index().rename(columns={"Id": "Pedidos"})
-                        c_h.plotly_chart(px.bar(horas, x="Hora_Num", y="Pedidos", title="Cantidad de pedidos por hora"), width='stretch', key=f"freq_hora_{nombre}")
+                        # AGREGADO: color="Pedidos", color_continuous_scale y text_auto
+                        fig_h = px.bar(horas, x="Hora_Num", y="Pedidos", 
+                                    title="Cantidad de pedidos por hora",
+                                    color="Pedidos", color_continuous_scale="Blues", # Color por valor
+                                    text_auto=True) # Muestra valores sin decimales
+                        c_h.plotly_chart(fig_h, use_container_width=True, key=f"freq_hora_{nombre}")
                     else:
                         c_h.info("No hay información horaria disponible.")
 
                     if "Dia_Semana" in df_canal.columns:
                         orden_dias = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
                         dias = df_canal.groupby("Dia_Semana")["Id"].nunique().reindex(orden_dias).dropna().reset_index().rename(columns={"Id": "Pedidos"})
-                        c_d.plotly_chart(px.bar(dias, x="Dia_Semana", y="Pedidos", title="Cantidad de pedidos por día"), width='stretch', key=f"freq_dia_{nombre}")
+                        
+                        fig_d = px.bar(dias, x="Dia_Semana", y="Pedidos", 
+                                    title="Cantidad de pedidos por día",
+                                    color="Pedidos", color_continuous_scale="Blues",
+                                    text_auto=True)
+                        c_d.plotly_chart(fig_d, use_container_width=True, key=f"freq_dia_{nombre}")
                     else:
                         c_d.info("No hay información de día disponible.")
 
                     st.markdown("### Venta total (monto) por hora y día")
                     c_vh, c_vd = st.columns(2)
+
                     if "Hora_Num" in df_canal.columns:
                         ventas_hora = df_canal.groupby("Hora_Num")["Monto total"].sum().reset_index().rename(columns={"Monto total": "Venta_Total"})
-                        c_vh.plotly_chart(px.bar(ventas_hora, x="Hora_Num", y="Venta_Total", title="Venta total por hora (Bs)", text_auto=True), width='stretch', key=f"venta_hora_{nombre}")
+                        # CAMBIO: text_auto='.2f' para 2 decimales y escala de color
+                        fig_vh = px.bar(ventas_hora, x="Hora_Num", y="Venta_Total", 
+                                        title="Venta total por hora (Bs)",
+                                        color="Venta_Total", color_continuous_scale="Viridis",
+                                        text_auto='.2f') 
+                        c_vh.plotly_chart(fig_vh, use_container_width=True, key=f"venta_hora_{nombre}")
                     else:
                         c_vh.info("No hay información horaria disponible.")
 
                     if "Dia_Semana" in df_canal.columns:
                         ventas_dia = df_canal.groupby("Dia_Semana")["Monto total"].sum().reindex(orden_dias).dropna().reset_index().rename(columns={"Monto total": "Venta_Total"})
-                        c_vd.plotly_chart(px.bar(ventas_dia, x="Dia_Semana", y="Venta_Total", title="Venta total por día (Bs)", text_auto=True), width='stretch', key=f"venta_dia_{nombre}")
+                        
+                        fig_vd = px.bar(ventas_dia, x="Dia_Semana", y="Venta_Total", 
+                                        title="Venta total por día (Bs)",
+                                        color="Venta_Total", color_continuous_scale="Viridis",
+                                        text_auto='.2f')
+                        c_vd.plotly_chart(fig_vd, use_container_width=True, key=f"venta_dia_{nombre}")
                     else:
                         c_vd.info("No hay información de día disponible.")
 
                     st.markdown("### Ticket promedio por hora y día")
                     c_th, c_td = st.columns(2)
+
                     if "Hora_Num" in df_canal.columns:
                         ticket_hora = df_canal.groupby("Hora_Num").agg(
                             Monto_Total=("Monto total", "sum"),
                             Pedidos=("Id", "nunique")
                         ).reset_index()
-                        ticket_hora["Ticket_Promedio"] = ticket_hora["Monto_Total"] / ticket_hora["Pedidos"]
-                        c_th.plotly_chart(px.bar(ticket_hora, x="Hora_Num", y="Ticket_Promedio", title="Ticket promedio por hora (Bs)", text_auto=True), width='stretch', key=f"ticket_hora_{nombre}")
+                        # CAMBIO: Redondeo .round(2) aquí
+                        ticket_hora["Ticket_Promedio"] = (ticket_hora["Monto_Total"] / ticket_hora["Pedidos"]).round(2)
+                        
+                        fig_th = px.bar(ticket_hora, x="Hora_Num", y="Ticket_Promedio", 
+                                        title="Ticket promedio por hora (Bs)",
+                                        color="Ticket_Promedio", color_continuous_scale="Magma",
+                                        text_auto='.2f')
+                        c_th.plotly_chart(fig_th, use_container_width=True, key=f"ticket_hora_{nombre}")
                     else:
                         c_th.info("No hay información horaria disponible.")
 
@@ -470,11 +499,16 @@ if modo_app == "📊 Análisis Individual":
                             Monto_Total=("Monto total", "sum"),
                             Pedidos=("Id", "nunique")
                         ).reindex(orden_dias).dropna().reset_index()
-                        ticket_dia["Ticket_Promedio"] = ticket_dia["Monto_Total"] / ticket_dia["Pedidos"]
-                        c_td.plotly_chart(px.bar(ticket_dia, x="Dia_Semana", y="Ticket_Promedio", title="Ticket promedio por día (Bs)", text_auto=True), width='stretch', key=f"ticket_dia_{nombre}")
+                        # CAMBIO: Redondeo .round(2) aquí
+                        ticket_dia["Ticket_Promedio"] = (ticket_dia["Monto_Total"] / ticket_dia["Pedidos"]).round(2)
+                        
+                        fig_td = px.bar(ticket_dia, x="Dia_Semana", y="Ticket_Promedio", 
+                                        title="Ticket promedio por día (Bs)",
+                                        color="Ticket_Promedio", color_continuous_scale="Magma",
+                                        text_auto='.2f')
+                        c_td.plotly_chart(fig_td, use_container_width=True, key=f"ticket_dia_{nombre}")
                     else:
                         c_td.info("No hay información de día disponible.")
-
                     # Análisis detallado por día de la semana
                     st.markdown("### Análisis por día de la semana")
                     if "Dia_Semana" in df_canal.columns and "Hora_Num" in df_canal.columns:
@@ -918,56 +952,83 @@ if modo_app == "📊 Análisis Individual":
                         else:
                             st.info("No se identificaron parejas frecuentes.")
 
+                        # --- SECCIÓN: FRECUENCIA DE PEDIDOS ---
                         st.markdown("### Frecuencia de pedidos")
                         c_h, c_d = st.columns(2)
+
                         if "Hora_Num" in df_total.columns:
                             horas = df_total.groupby("Hora_Num")["Id"].nunique().reset_index().rename(columns={"Id": "Pedidos"})
-                            c_h.plotly_chart(px.bar(horas, x="Hora_Num", y="Pedidos", title="Cantidad de pedidos por hora"), use_container_width=True, key="freq_hora_total")
+                            # AGREGADO: color="Pedidos" y color_continuous_scale
+                            fig_h = px.bar(horas, x="Hora_Num", y="Pedidos", 
+                                        title="Cantidad de pedidos por hora",
+                                        color="Pedidos", color_continuous_scale="Blues", # Color por valor
+                                        text_auto=True) # Muestra valores
+                            c_h.plotly_chart(fig_h, use_container_width=True, key="freq_hora_total")
                         else:
                             c_h.info("No hay información horaria disponible.")
 
                         if "Dia_Semana" in df_total.columns:
                             orden_dias = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
                             dias = df_total.groupby("Dia_Semana")["Id"].nunique().reindex(orden_dias).dropna().reset_index().rename(columns={"Id": "Pedidos"})
-                            c_d.plotly_chart(px.bar(dias, x="Dia_Semana", y="Pedidos", title="Cantidad de pedidos por día"), use_container_width=True, key="freq_dia_total")
-                        else:
-                            c_d.info("No hay información de día disponible.")
+                            # AGREGADO: color="Pedidos"
+                            fig_d = px.bar(dias, x="Dia_Semana", y="Pedidos", 
+                                        title="Cantidad de pedidos por día",
+                                        color="Pedidos", color_continuous_scale="Blues",
+                                        text_auto=True)
+                            c_d.plotly_chart(fig_d, use_container_width=True, key="freq_dia_total")
 
+                        # --- SECCIÓN: VENTA TOTAL ---
                         st.markdown("### Venta total (monto) por hora y día")
                         c_vh, c_vd = st.columns(2)
+
                         if "Hora_Num" in df_total.columns:
                             ventas_hora = df_total.groupby("Hora_Num")["Monto total"].sum().reset_index().rename(columns={"Monto total": "Venta_Total"})
-                            c_vh.plotly_chart(px.bar(ventas_hora, x="Hora_Num", y="Venta_Total", title="Venta total por hora (Bs)", text_auto=True), use_container_width=True, key="venta_hora_total")
-                        else:
-                            c_vh.info("No hay información horaria disponible.")
+                            # CAMBIO: text_auto='.2f' para mostrar 2 decimales y color para degradado
+                            fig_vh = px.bar(ventas_hora, x="Hora_Num", y="Venta_Total", 
+                                            title="Venta total por hora (Bs)",
+                                            color="Venta_Total", color_continuous_scale="Viridis",
+                                            text_auto='.2f') 
+                            c_vh.plotly_chart(fig_vh, use_container_width=True, key="venta_hora_total")
 
                         if "Dia_Semana" in df_total.columns:
                             ventas_dia = df_total.groupby("Dia_Semana")["Monto total"].sum().reindex(orden_dias).dropna().reset_index().rename(columns={"Monto total": "Venta_Total"})
-                            c_vd.plotly_chart(px.bar(ventas_dia, x="Dia_Semana", y="Venta_Total", title="Venta total por día (Bs)", text_auto=True), use_container_width=True, key="venta_dia_total")
-                        else:
-                            c_vd.info("No hay información de día disponible.")
+                            fig_vd = px.bar(ventas_dia, x="Dia_Semana", y="Venta_Total", 
+                                            title="Venta total por día (Bs)",
+                                            color="Venta_Total", color_continuous_scale="Viridis",
+                                            text_auto='.2f')
+                            c_vd.plotly_chart(fig_vd, use_container_width=True, key="venta_dia_total")
 
+                        # --- SECCIÓN: TICKET PROMEDIO ---
                         st.markdown("### Ticket promedio por hora y día")
                         c_th, c_td = st.columns(2)
+
                         if "Hora_Num" in df_total.columns:
                             ticket_hora = df_total.groupby("Hora_Num").agg(
                                 Monto_Total=("Monto total", "sum"),
                                 Pedidos=("Id", "nunique")
                             ).reset_index()
-                            ticket_hora["Ticket_Promedio"] = ticket_hora["Monto_Total"] / ticket_hora["Pedidos"]
-                            c_th.plotly_chart(px.bar(ticket_hora, x="Hora_Num", y="Ticket_Promedio", title="Ticket promedio por hora (Bs)", text_auto=True), use_container_width=True, key="ticket_hora_total")
-                        else:
-                            c_th.info("No hay información horaria disponible.")
+                            # CAMBIO: Se agrega .round(2) al final de la operación
+                            ticket_hora["Ticket_Promedio"] = (ticket_hora["Monto_Total"] / ticket_hora["Pedidos"]).round(2)
+                            
+                            fig_th = px.bar(ticket_hora, x="Hora_Num", y="Ticket_Promedio", 
+                                            title="Ticket promedio por hora (Bs)",
+                                            color="Ticket_Promedio", color_continuous_scale="Magma",
+                                            text_auto='.2f')
+                            c_th.plotly_chart(fig_th, use_container_width=True, key="ticket_hora_total")
 
                         if "Dia_Semana" in df_total.columns:
                             ticket_dia = df_total.groupby("Dia_Semana").agg(
                                 Monto_Total=("Monto total", "sum"),
                                 Pedidos=("Id", "nunique")
                             ).reindex(orden_dias).dropna().reset_index()
-                            ticket_dia["Ticket_Promedio"] = ticket_dia["Monto_Total"] / ticket_dia["Pedidos"]
-                            c_td.plotly_chart(px.bar(ticket_dia, x="Dia_Semana", y="Ticket_Promedio", title="Ticket promedio por día (Bs)", text_auto=True), use_container_width=True, key="ticket_dia_total")
-                        else:
-                            c_td.info("No hay información de día disponible.")
+                            # CAMBIO: Se agrega .round(2)
+                            ticket_dia["Ticket_Promedio"] = (ticket_dia["Monto_Total"] / ticket_dia["Pedidos"]).round(2)
+                            
+                            fig_td = px.bar(ticket_dia, x="Dia_Semana", y="Ticket_Promedio", 
+                                            title="Ticket promedio por día (Bs)",
+                                            color="Ticket_Promedio", color_continuous_scale="Magma",
+                                            text_auto='.2f')
+                            c_td.plotly_chart(fig_td, use_container_width=True, key="ticket_dia_total")
 
                         # Análisis detallado por día de la semana
                         st.markdown("### Análisis por día de la semana")

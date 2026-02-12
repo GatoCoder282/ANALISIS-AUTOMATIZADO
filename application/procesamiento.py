@@ -136,6 +136,7 @@ class AnalistaDeDatos:
     def analizar_productos(self):
         """
         Desglosa la columna 'Detalle' separando Producto Base de sus Variantes.
+        Usa split por '—' (guion largo) para separar items.
         """
         if self.tipo != "VENTAS" or "Detalle" not in self.df.columns:
             return None
@@ -146,14 +147,10 @@ class AnalistaDeDatos:
         
         items_vendidos = []
         
-        # 2. NUEVO REGEX AVANZADO
-        # Grupo 1: Cantidad
-        # Grupo 2: Producto Base (hasta encontrar ':', '.', '(' o el final)
-        # Grupo 3: Variantes (Opcional, lo que sigue después de los separadores)
-        # Lookahead: Se detiene antes del siguiente "1x" o el final de la línea
-        patron_item = r'(\d+)\s*[x×]\s*(.+?)(?=\s+\d+\s*[x×]|$)'
+        # Patrón para extraer cantidad y nombre de cada item individual
+        patron_item = r'(\d+)\s*[x×]\s*(.+)'
 
-        # --- PASO 2: PATRÓN DE LIMPIEZA DE NOMBRE ---
+        # --- PATRÓN DE LIMPIEZA DE NOMBRE ---
         # Separa "Cappuccino (Leche almendra)" en "Cappuccino" y "Leche almendra"
         # Corta en ':', '(', o '.'
         patron_variante = r'^([^(:.]+)(?:[\(:\.]\s*(.+?)\)?)?$'
@@ -161,8 +158,13 @@ class AnalistaDeDatos:
         for _, row in df_analisis.iterrows():
             detalle = str(row["Detalle"]).replace("\n", " ") # Limpiar saltos de línea
             
-            # Paso 1: Encontrar todos los items en el string gigante
-            matches_items = re.findall(patron_item, detalle)
+            # Paso 1: Separar por guion largo y procesar cada item
+            productos_raw = detalle.split("—")
+            matches_items = []
+            for p in productos_raw:
+                match = re.match(patron_item, p.strip())
+                if match:
+                    matches_items.append((match.group(1), match.group(2)))
             
             for cantidad, nombre_sucio in matches_items:
                 nombre_sucio = nombre_sucio.strip()
@@ -474,7 +476,7 @@ class AnalistaDeDatos:
     def basket_analysis(self, top_n=20, min_support=2):
         """
         Análisis de mercado simple: pares de productos que ocurren juntos.
-        ACTUALIZADO: Usa regex robusto con \s+ para separar items.
+        Usa split por '—' (guion largo) para separar items.
         """
         if "Detalle" not in self.df.columns and "producto" not in self.df.columns:
             return None
@@ -483,13 +485,22 @@ class AnalistaDeDatos:
         tx_items = []
 
         if "Detalle" in self.df.columns:
-            patron = r'(\d+)\s*[x×]\s*(.+?)(?=\s+\d+\s*[x×]|$)' 
+            patron_item = r'(\d+)\s*[x×]\s*(.+)'
             df_valid = self._excluir_alquiler(self.df.copy())
-            grouped = df_valid[df_valid["Es_Valido"]==True].groupby("Id")["Detalle"].agg(lambda s: "   ".join(s.dropna().astype(str)))
+            grouped = df_valid[df_valid["Es_Valido"]==True].groupby("Id")["Detalle"].agg(lambda s: "—".join(s.dropna().astype(str)))
             
             for detalle in grouped:
-                matches = re.findall(patron, str(detalle))
-                items = [m[1].strip().lower() for m in matches if m[1].strip()]
+                # Separar por guion largo y extraer nombre de cada producto
+                productos = str(detalle).split("—")
+                items = []
+                for p in productos:
+                    match = re.match(patron_item, p.strip())
+                    if match:
+                        nombre = match.group(2).strip().lower()
+                        # Extraer solo el nombre base (antes de : o ()
+                        nombre_base = re.split(r'[(:.]', nombre)[0].strip()
+                        if nombre_base:
+                            items.append(nombre_base)
                 
                 if items:
                     tx_items.append(list(set(items)))
